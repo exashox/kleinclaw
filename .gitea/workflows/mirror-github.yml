@@ -1,0 +1,21 @@
+# Publishes main and release tags to the GitHub fork. Nothing else leaves Gitea.
+name: mirror-github
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push ref to GitHub
+        env:
+          GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+        run: |
+          git push "https://x-access-token:${GH_MIRROR_TOKEN}@github.com/exashox/kleinclaw.git" \
+            "${GITHUB_REF}:${GITHUB_REF}"
