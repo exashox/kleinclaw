@@ -8,7 +8,8 @@
 - prefer Auth0's primary submit button over "resend code" and tick "remember
   this device" when offered
 - print the code page structure (no field values) when the code field is not
-  found
+  found, and the login page structure (headings, error messages, language) when
+  the post-password step stays inconclusive
 - persist an explicit **Always allow** choice in the existing `approvalMode`
 - keep approval descriptions within the supported OpenClaw request limit
 

@@ -327,8 +327,13 @@ async function describeCodePageStructure(controller) {
         return "(page structure unavailable)";
     }
     try {
-        const result = await controller.webExecute("JSON.stringify({path: location.pathname," +
-            "inputs: Array.from(document.querySelectorAll('input')).map(function(e){" +
+        const result = await controller.webExecute("JSON.stringify({path: location.pathname, lang: document.documentElement.lang," +
+            "headings: Array.from(document.querySelectorAll('h1,h2')).map(function(h){" +
+            "return (h.innerText || '').trim().slice(0, 80);})," +
+            "messages: Array.from(document.querySelectorAll(" +
+            "\"[role='alert'],[id*='error'],[class*='error']\")).map(function(m){" +
+            "return (m.innerText || '').trim().slice(0, 120);}).filter(Boolean)," +
+            "inputs:Array.from(document.querySelectorAll('input')).map(function(e){" +
             "return {type: e.type, name: e.name, id: e.id, autocomplete: e.autocomplete," +
             "inputmode: e.inputMode, visible: !!(e.offsetWidth || e.offsetHeight)};})," +
             "buttons: Array.from(document.querySelectorAll('button')).map(function(b){" +
@@ -447,6 +452,7 @@ export async function waitForPostAuth0SubmitTransition(controller, credentials, 
     })) {
         return;
     }
+    console.error(`Login page structure: ${await describeCodePageStructure(controller)}`);
     throw new TimeoutError(`Auth0 post-submit verification remained inconclusive (url=${currentPageUrl(controller)})`);
 }
 export async function fillLoginDataAndSend(controller, credentials, options = {}) {
