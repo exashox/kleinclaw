@@ -55,6 +55,7 @@ export class LoginDetectionResult {
 export interface LoginController {
   readonly page?: { url?: string };
   webClick(type: By, value: string, timeout?: number): Promise<WebLocator>;
+  webExecute?(jscode: string): Promise<unknown>;
   webInput(type: By, value: string, text: string, timeout?: number): Promise<WebLocator>;
   webOpen(
     url: string,
@@ -100,6 +101,8 @@ export interface LoginOptions {
   emailVerificationTimeout?: number;
   loginDetectionTimeout?: number;
   onManualCaptcha?: () => Promise<void> | void;
+  /** Supplies the SMS code typed by the account owner. Defaults to a terminal prompt. */
+  onSmsCode?: () => Promise<string> | string;
   onVerificationPrompt?: (
     context: VerificationPromptContext,
   ) => Promise<void> | void;
@@ -107,6 +110,7 @@ export interface LoginOptions {
   pollIntervalMs?: number;
   quickDomTimeout?: number;
   rootUrl?: string;
+  smsCodeInputTimeout?: number;
   smsVerificationTimeout?: number;
 }
 
@@ -130,6 +134,7 @@ function loginOptionsWithDefaults(options: LoginOptions): Required<
     | "pollIntervalMs"
     | "quickDomTimeout"
     | "rootUrl"
+    | "smsCodeInputTimeout"
     | "smsVerificationTimeout"
   >
 > & LoginOptions {
@@ -139,11 +144,13 @@ function loginOptionsWithDefaults(options: LoginOptions): Required<
     emailVerificationTimeout: options.emailVerificationTimeout ?? 5,
     loginDetectionTimeout: options.loginDetectionTimeout ?? 12,
     onManualCaptcha: options.onManualCaptcha,
+    onSmsCode: options.onSmsCode,
     onVerificationPrompt: options.onVerificationPrompt,
     pageLoadTimeout: options.pageLoadTimeout ?? 15,
     pollIntervalMs: options.pollIntervalMs ?? 250,
     quickDomTimeout: options.quickDomTimeout ?? 2,
     rootUrl: options.rootUrl ?? "https://www.kleinanzeigen.de",
+    smsCodeInputTimeout: options.smsCodeInputTimeout ?? 20,
     smsVerificationTimeout: options.smsVerificationTimeout ?? 5,
   };
 }
@@ -417,6 +424,137 @@ async function defaultVerificationPrompt(
   );
 }
 
+export const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+
+/** Candidate selectors for the SMS code field, most specific first. */
+export const SMS_CODE_INPUT_SELECTORS: readonly string[] = [
+  "input[autocomplete='one-time-code']",
+  "input[name='code']",
+  "input[inputmode='numeric']",
+  "input[type='tel']",
+  "input[type='text']",
+];
+
+const SMS_CODE_RE = /^\d{4,8}$/;
+
+function isInteractiveTerminal(): boolean {
+  return Boolean(input.isTTY && output.isTTY);
+}
+
+async function promptForSmsCode(): Promise<string> {
+  if (!isInteractiveTerminal()) {
+    throw new Error("SMS code entry requires an interactive run.");
+  }
+  const readline = createInterface({ input, output });
+  try {
+    return await readline.question("SMS code from Kleinanzeigen: ");
+  } finally {
+    readline.close();
+  }
+}
+
+async function findSmsCodeInput(
+  controller: LoginController,
+  timeoutSeconds: number,
+  pollIntervalMs: number,
+): Promise<string | null> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (true) {
+    for (const selector of SMS_CODE_INPUT_SELECTORS) {
+      if (await controller.webProbe(By.CSS_SELECTOR, selector, { timeout: 0.5 })) {
+        return selector;
+      }
+    }
+    if (Date.now() >= deadline) {
+      return null;
+    }
+    await controller.webSleep(pollIntervalMs, pollIntervalMs);
+  }
+}
+
+/** Describes the page structure without any field values, for diagnosing selector misses. */
+async function describeCodePageStructure(
+  controller: LoginController,
+): Promise<string> {
+  if (!controller.webExecute) {
+    return "(page structure unavailable)";
+  }
+  try {
+    const result = await controller.webExecute(
+      "JSON.stringify({path: location.pathname," +
+        "inputs: Array.from(document.querySelectorAll('input')).map(function(e){" +
+        "return {type: e.type, name: e.name, id: e.id, autocomplete: e.autocomplete," +
+        "inputmode: e.inputMode, visible: !!(e.offsetWidth || e.offsetHeight)};})," +
+        "buttons: Array.from(document.querySelectorAll('button')).map(function(b){" +
+        "return {text: (b.innerText || '').trim().slice(0, 40), type: b.type};})})",
+    );
+    return String(result);
+  } catch {
+    return "(page structure unavailable)";
+  }
+}
+
+/**
+ * Handles Kleinanzeigen's "Code senden" challenge page: requests the SMS code,
+ * waits for the account owner to supply it, enters it and submits.
+ * Returns false when the challenge page is not shown. Never logs the code.
+ */
+export async function handleCodeChallengePage(
+  controller: LoginController,
+  options: LoginOptions = {},
+): Promise<boolean> {
+  const resolvedOptions = loginOptionsWithDefaults(options);
+  const challenge = await controller.webProbe(By.TEXT, CODE_CHALLENGE_BUTTON_TEXT, {
+    timeout: resolvedOptions.quickDomTimeout,
+  });
+  if (!challenge) {
+    return false;
+  }
+
+  const provideCode = resolvedOptions.onSmsCode ?? promptForSmsCode;
+  if (!resolvedOptions.onSmsCode && !isInteractiveTerminal()) {
+    throw new Error(
+      "Kleinanzeigen asks for an SMS verification code. Run this from an " +
+        "interactive terminal. No code was requested.",
+    );
+  }
+
+  await controller.webClick(By.TEXT, CODE_CHALLENGE_BUTTON_TEXT);
+  const selector = await findSmsCodeInput(
+    controller,
+    resolvedOptions.smsCodeInputTimeout,
+    resolvedOptions.pollIntervalMs,
+  );
+  if (!selector) {
+    console.error(
+      `SMS code field not found. Page structure: ${await describeCodePageStructure(controller)}`,
+    );
+    throw new Error(
+      "SMS code field not found after requesting the code " +
+        `(url=${currentPageUrl(controller)})`,
+    );
+  }
+
+  console.error("# An SMS code was requested. Enter it in this terminal.");
+  const code = String(await provideCode()).trim();
+  if (!SMS_CODE_RE.test(code)) {
+    throw new Error("The SMS code must be 4 to 8 digits.");
+  }
+  await controller.webInput(By.CSS_SELECTOR, selector, code);
+  await controller.webClick(By.CSS_SELECTOR, "button[type='submit']");
+  await waitForCondition(
+    controller,
+    () => isValidPostAuth0Destination(currentPageUrl(controller)),
+    {
+      pollIntervalMs: resolvedOptions.pollIntervalMs,
+      timeout: Math.max(resolvedOptions.loginDetectionTimeout, 30),
+      timeoutErrorMessage:
+        `SMS code was not accepted (url=${currentPageUrl(controller)})`,
+    },
+  );
+  return true;
+}
+
 export async function waitForAuth0LoginContext(
   controller: LoginController,
   options: LoginOptions = {},
@@ -495,6 +633,10 @@ export async function waitForPostAuth0SubmitTransition(
   }
 
   if (await isLoggedIn(controller, credentials, resolvedOptions)) {
+    return;
+  }
+
+  if (await handleCodeChallengePage(controller, resolvedOptions)) {
     return;
   }
 

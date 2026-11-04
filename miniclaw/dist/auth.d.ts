@@ -17,6 +17,7 @@ export interface LoginController {
         url?: string;
     };
     webClick(type: By, value: string, timeout?: number): Promise<WebLocator>;
+    webExecute?(jscode: string): Promise<unknown>;
     webInput(type: By, value: string, text: string, timeout?: number): Promise<WebLocator>;
     webOpen(url: string, options?: {
         timeout?: number;
@@ -56,11 +57,14 @@ export interface LoginOptions {
     emailVerificationTimeout?: number;
     loginDetectionTimeout?: number;
     onManualCaptcha?: () => Promise<void> | void;
+    /** Supplies the SMS code typed by the account owner. Defaults to a terminal prompt. */
+    onSmsCode?: () => Promise<string> | string;
     onVerificationPrompt?: (context: VerificationPromptContext) => Promise<void> | void;
     pageLoadTimeout?: number;
     pollIntervalMs?: number;
     quickDomTimeout?: number;
     rootUrl?: string;
+    smsCodeInputTimeout?: number;
     smsVerificationTimeout?: number;
 }
 export declare function currentPageUrl(controller: LoginController): string;
@@ -69,6 +73,15 @@ export declare function getLoginState(controller: LoginController, credentials: 
     captureSelectorDiagnostics?: boolean;
 }): Promise<LoginDetectionResult>;
 export declare function isLoggedIn(controller: LoginController, credentials: LoginConfig, options?: LoginOptions): Promise<boolean>;
+export declare const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+/** Candidate selectors for the SMS code field, most specific first. */
+export declare const SMS_CODE_INPUT_SELECTORS: readonly string[];
+/**
+ * Handles Kleinanzeigen's "Code senden" challenge page: requests the SMS code,
+ * waits for the account owner to supply it, enters it and submits.
+ * Returns false when the challenge page is not shown. Never logs the code.
+ */
+export declare function handleCodeChallengePage(controller: LoginController, options?: LoginOptions): Promise<boolean>;
 export declare function waitForAuth0LoginContext(controller: LoginController, options?: LoginOptions): Promise<void>;
 export declare function waitForAuth0PasswordStep(controller: LoginController, options?: LoginOptions): Promise<void>;
 export declare function waitForPostAuth0SubmitTransition(controller: LoginController, credentials: LoginConfig, options?: LoginOptions): Promise<void>;
