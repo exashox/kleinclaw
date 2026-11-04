@@ -619,6 +619,15 @@ behavior:
 
 <https://docs.openclaw.ai/plugins/plugin-permission-requests>
 
+### SMS verification code
+
+Kleinanzeigen may ask for a 6-digit SMS code after the password ("Code
+senden"). miniclaw only requests the code from an interactive terminal; agent
+tool runs stop before any SMS is sent. Run one scoped live command yourself in
+a terminal, type the code when prompted, and keep `use_private_window: false`
+so the browser profile can remember the device. The code is never logged.
+Avoid repeated login attempts in a short time.
+
 ## Notes
 
 The embedded runtime still owns browser automation and account checks. KleinClaw

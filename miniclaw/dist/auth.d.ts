@@ -77,6 +77,12 @@ export declare const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
 /** Candidate selectors for the SMS code field, most specific first. */
 export declare const SMS_CODE_INPUT_SELECTORS: readonly string[];
 /**
+ * Submit buttons for the SMS code, most specific first. Auth0 renders
+ * "resend code" as a second submit button, so prefer the primary action.
+ */
+export declare const SMS_CODE_SUBMIT_SELECTORS: readonly string[];
+export declare const REMEMBER_DEVICE_SELECTOR = "input[type='checkbox'][name='rememberBrowser']";
+/**
  * Handles Kleinanzeigen's "Code senden" challenge page: requests the SMS code,
  * waits for the account owner to supply it, enters it and submits.
  * Returns false when the challenge page is not shown. Never logs the code.

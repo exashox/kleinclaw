@@ -253,6 +253,16 @@ export const SMS_CODE_INPUT_SELECTORS = [
     "input[type='tel']",
     "input[type='text']",
 ];
+/**
+ * Submit buttons for the SMS code, most specific first. Auth0 renders
+ * "resend code" as a second submit button, so prefer the primary action.
+ */
+export const SMS_CODE_SUBMIT_SELECTORS = [
+    "button[type='submit'][name='action'][value='default']",
+    "button[type='submit'][value='default']",
+];
+const SMS_CODE_SUBMIT_FALLBACK = "button[type='submit']";
+export const REMEMBER_DEVICE_SELECTOR = "input[type='checkbox'][name='rememberBrowser']";
 const SMS_CODE_RE = /^\d{4,8}$/;
 function isInteractiveTerminal() {
     return Boolean(input.isTTY && output.isTTY);
@@ -283,6 +293,34 @@ async function findSmsCodeInput(controller, timeoutSeconds, pollIntervalMs) {
         await controller.webSleep(pollIntervalMs, pollIntervalMs);
     }
 }
+async function findSmsCodeSubmit(controller) {
+    for (const selector of SMS_CODE_SUBMIT_SELECTORS) {
+        if (await controller.webProbe(By.CSS_SELECTOR, selector, { timeout: 0.5 })) {
+            return selector;
+        }
+    }
+    return SMS_CODE_SUBMIT_FALLBACK;
+}
+/**
+ * Ticks Auth0's "remember this device" box when the page offers it, so the
+ * persistent browser profile is not asked for a code on every run.
+ */
+async function selectRememberDevice(controller) {
+    if (!controller.webExecute) {
+        return;
+    }
+    try {
+        const state = await controller.webExecute(`(function(){var e=document.querySelector(${JSON.stringify(REMEMBER_DEVICE_SELECTOR)});` +
+            "return e ? String(e.checked) : 'missing';})()");
+        if (state === "false") {
+            await controller.webClick(By.CSS_SELECTOR, REMEMBER_DEVICE_SELECTOR);
+            console.error("# Selected 'remember this device'.");
+        }
+    }
+    catch {
+        // The checkbox is optional; never block the code entry on it.
+    }
+}
 /** Describes the page structure without any field values, for diagnosing selector misses. */
 async function describeCodePageStructure(controller) {
     if (!controller.webExecute) {
@@ -294,7 +332,8 @@ async function describeCodePageStructure(controller) {
             "return {type: e.type, name: e.name, id: e.id, autocomplete: e.autocomplete," +
             "inputmode: e.inputMode, visible: !!(e.offsetWidth || e.offsetHeight)};})," +
             "buttons: Array.from(document.querySelectorAll('button')).map(function(b){" +
-            "return {text: (b.innerText || '').trim().slice(0, 40), type: b.type};})})");
+            "return {text: (b.innerText || '').trim().slice(0, 40), type: b.type," +
+            "name: b.name, value: b.value};})})");
         return String(result);
     }
     catch {
@@ -332,7 +371,8 @@ export async function handleCodeChallengePage(controller, options = {}) {
         throw new Error("The SMS code must be 4 to 8 digits.");
     }
     await controller.webInput(By.CSS_SELECTOR, selector, code);
-    await controller.webClick(By.CSS_SELECTOR, "button[type='submit']");
+    await selectRememberDevice(controller);
+    await controller.webClick(By.CSS_SELECTOR, await findSmsCodeSubmit(controller));
     await waitForCondition(controller, () => isValidPostAuth0Destination(currentPageUrl(controller)), {
         pollIntervalMs: resolvedOptions.pollIntervalMs,
         timeout: Math.max(resolvedOptions.loginDetectionTimeout, 30),

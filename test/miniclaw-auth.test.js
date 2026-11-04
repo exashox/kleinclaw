@@ -140,7 +140,12 @@ describe("miniclaw auth", () => {
 });
 
 describe("miniclaw SMS code challenge", () => {
-  function makeController({ hasChallenge = true, inputSelector = "input[type='tel']" } = {}) {
+  function makeController({
+    hasChallenge = true,
+    inputSelector = "input[type='tel']",
+    submitSelector = "button[type='submit']",
+    rememberChecked = null,
+  } = {}) {
     const calls = { clicks: [], inputs: [], probes: [] };
     const controller = {
       page: { url: "https://login.kleinanzeigen.de/u/mfa-sms-challenge" },
@@ -153,11 +158,14 @@ describe("miniclaw SMS code challenge", () => {
         if (type === By.CSS_SELECTOR && value === inputSelector && calls.clicks.length) {
           return {};
         }
+        if (type === By.CSS_SELECTOR && value === submitSelector && calls.inputs.length) {
+          return {};
+        }
         return null;
       },
       async webClick(type, value) {
         calls.clicks.push([type, value]);
-        if (type === By.CSS_SELECTOR && value === "button[type='submit']") {
+        if (type === By.CSS_SELECTOR && value === submitSelector) {
           controller.page.url = "https://www.kleinanzeigen.de/";
         }
         return {};
@@ -167,7 +175,10 @@ describe("miniclaw SMS code challenge", () => {
         return {};
       },
       async webSleep() {},
-      async webExecute() {
+      async webExecute(jscode) {
+        if (jscode.includes("rememberBrowser")) {
+          return rememberChecked === null ? "missing" : String(rememberChecked);
+        }
         return JSON.stringify({ inputs: [], buttons: [] });
       },
     };
@@ -194,6 +205,33 @@ describe("miniclaw SMS code challenge", () => {
       [By.CSS_SELECTOR, "input[type='tel']", "123456"],
     ]);
     assert.deepEqual(controller.calls.clicks[1], [By.CSS_SELECTOR, "button[type='submit']"]);
+  });
+
+  it("prefers the primary submit button over resend and ticks remember-device", async () => {
+    const primary = "button[type='submit'][name='action'][value='default']";
+    const controller = makeController({ submitSelector: primary, rememberChecked: false });
+    const handled = await handleCodeChallengePage(controller, {
+      quickDomTimeout: 0.1,
+      smsCodeInputTimeout: 1,
+      onSmsCode: async () => "123456",
+    });
+    assert.equal(handled, true);
+    assert.deepEqual(controller.calls.clicks.slice(1), [
+      [By.CSS_SELECTOR, "input[type='checkbox'][name='rememberBrowser']"],
+      [By.CSS_SELECTOR, primary],
+    ]);
+  });
+
+  it("leaves an already ticked remember-device box alone", async () => {
+    const controller = makeController({ rememberChecked: true });
+    await handleCodeChallengePage(controller, {
+      quickDomTimeout: 0.1,
+      smsCodeInputTimeout: 1,
+      onSmsCode: async () => "123456",
+    });
+    assert.deepEqual(controller.calls.clicks.slice(1), [
+      [By.CSS_SELECTOR, "button[type='submit']"],
+    ]);
   });
 
   it("refuses non-numeric codes without typing them", async () => {
