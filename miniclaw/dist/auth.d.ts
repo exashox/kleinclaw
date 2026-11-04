@@ -74,6 +74,11 @@ export declare function getLoginState(controller: LoginController, credentials: 
 }): Promise<LoginDetectionResult>;
 export declare function isLoggedIn(controller: LoginController, credentials: LoginConfig, options?: LoginOptions): Promise<boolean>;
 export declare const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+/**
+ * Texts of the page Kleinanzeigen shows after too many login attempts from one
+ * IP range. The German text was observed live; the English one is assumed.
+ */
+export declare const LOGIN_BLOCKED_TEXTS: readonly string[];
 /** Button texts of the "send SMS code" page; Auth0 localizes by browser language. */
 export declare const CODE_CHALLENGE_BUTTON_TEXTS: readonly string[];
 /** Candidate selectors for the SMS code field, most specific first. */

@@ -245,6 +245,14 @@ async function defaultVerificationPrompt(context) {
         "Please follow the instruction displayed in the browser.");
 }
 export const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+/**
+ * Texts of the page Kleinanzeigen shows after too many login attempts from one
+ * IP range. The German text was observed live; the English one is assumed.
+ */
+export const LOGIN_BLOCKED_TEXTS = [
+    "IP-Bereich vorübergehend gesperrt",
+    "temporarily blocked",
+];
 /** Button texts of the "send SMS code" page; Auth0 localizes by browser language. */
 export const CODE_CHALLENGE_BUTTON_TEXTS = [
     CODE_CHALLENGE_BUTTON_TEXT,
@@ -453,6 +461,13 @@ export async function waitForPostAuth0SubmitTransition(controller, credentials, 
     }
     if (await isLoggedIn(controller, credentials, resolvedOptions)) {
         return;
+    }
+    for (const text of LOGIN_BLOCKED_TEXTS) {
+        if (await controller.webProbe(By.TEXT, text, { timeout: 0.5 })) {
+            console.error(`Login page structure: ${await describeCodePageStructure(controller)}`);
+            throw new Error("Kleinanzeigen has temporarily blocked logins from this IP range. " +
+                "Do not retry for at least 24 hours; every attempt can extend the block.");
+        }
     }
     if (await controller.webProbe(By.CSS_SELECTOR, CAPTCHA_IFRAME_SELECTOR, {
         timeout: resolvedOptions.quickDomTimeout,

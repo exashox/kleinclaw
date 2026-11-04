@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- stop with a clear "do not retry for 24 hours" message when Kleinanzeigen
+  shows "IP-Bereich vorübergehend gesperrt" after the password step
+
 ## 0.2.3
 
 - handle the Kleinanzeigen "Code senden" SMS challenge after the password step:

@@ -248,6 +248,30 @@ describe("miniclaw SMS code challenge", () => {
     assert.equal(clicks.length, 0);
   });
 
+  it("stops with a clear message when the IP range is temporarily blocked", async () => {
+    const controller = {
+      page: { url: "https://login.kleinanzeigen.de/u/login/password" },
+      async webProbe(type, value) {
+        return type === By.TEXT && value === "IP-Bereich vorübergehend gesperrt" ? {} : null;
+      },
+      async webClick() {
+        throw new Error("must not click on the block page");
+      },
+      async webSleep() {},
+      async webText() {
+        return "";
+      },
+    };
+    await assert.rejects(
+      () => waitForPostAuth0SubmitTransition(
+        controller,
+        { username: "user@example.invalid", password: "secret" },
+        { loginDetectionTimeout: 0.1, quickDomTimeout: 0.1, pollIntervalMs: 10 },
+      ),
+      /temporarily blocked logins from this IP range/,
+    );
+  });
+
   it("prefers the primary submit button over resend and ticks remember-device", async () => {
     const primary = "button[type='submit'][name='action'][value='default']";
     const controller = makeController({ submitSelector: primary, rememberChecked: false });
