@@ -6,8 +6,10 @@ import {
   getLoginState,
   handleCodeChallengePage,
   LoginDetectionReason,
+  waitForPostAuth0SubmitTransition,
 } from "../miniclaw/dist/auth.js";
 import { Config } from "../miniclaw/dist/model/config-model.js";
+import { CAPTCHA_IFRAME_SELECTOR } from "../miniclaw/dist/publish-form.js";
 import { By } from "../miniclaw/dist/web-primitives.js";
 
 describe("miniclaw auth", () => {
@@ -142,6 +144,7 @@ describe("miniclaw auth", () => {
 describe("miniclaw SMS code challenge", () => {
   function makeController({
     hasChallenge = true,
+    challengeText = "Code senden",
     inputSelector = "input[type='tel']",
     submitSelector = "button[type='submit']",
     rememberChecked = null,
@@ -152,7 +155,7 @@ describe("miniclaw SMS code challenge", () => {
       calls,
       async webProbe(type, value) {
         calls.probes.push([type, value]);
-        if (type === By.TEXT && value === "Code senden") {
+        if (type === By.TEXT && value === challengeText) {
           return hasChallenge ? {} : null;
         }
         if (type === By.CSS_SELECTOR && value === inputSelector && calls.clicks.length) {
@@ -205,6 +208,44 @@ describe("miniclaw SMS code challenge", () => {
       [By.CSS_SELECTOR, "input[type='tel']", "123456"],
     ]);
     assert.deepEqual(controller.calls.clicks[1], [By.CSS_SELECTOR, "button[type='submit']"]);
+  });
+
+  it("recognizes the English send-code page", async () => {
+    const controller = makeController({ challengeText: "Send code" });
+    const handled = await handleCodeChallengePage(controller, {
+      quickDomTimeout: 0.1,
+      smsCodeInputTimeout: 1,
+      onSmsCode: async () => "123456",
+    });
+    assert.equal(handled, true);
+    assert.deepEqual(controller.calls.clicks[0], [By.TEXT, "Send code"]);
+  });
+
+  it("reports a captcha shown after the password step without requesting a code", async () => {
+    const clicks = [];
+    const controller = {
+      page: { url: "https://login.kleinanzeigen.de/u/login/password" },
+      async webProbe(type, value) {
+        return type === By.CSS_SELECTOR && value === CAPTCHA_IFRAME_SELECTOR ? {} : null;
+      },
+      async webClick(type, value) {
+        clicks.push([type, value]);
+        return {};
+      },
+      async webSleep() {},
+      async webText() {
+        return "";
+      },
+    };
+    await assert.rejects(
+      () => waitForPostAuth0SubmitTransition(
+        controller,
+        { username: "user@example.invalid", password: "secret" },
+        { loginDetectionTimeout: 0.1, quickDomTimeout: 0.1, pollIntervalMs: 10 },
+      ),
+      /captcha after the password step/,
+    );
+    assert.equal(clicks.length, 0);
   });
 
   it("prefers the primary submit button over resend and ticks remember-device", async () => {

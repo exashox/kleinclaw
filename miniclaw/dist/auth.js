@@ -6,7 +6,7 @@
 import assert from "node:assert";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { checkAndWaitForCaptcha } from "./publish-form.js";
+import { CAPTCHA_IFRAME_SELECTOR, checkAndWaitForCaptcha } from "./publish-form.js";
 import { hasErrorName } from "./value-guards.js";
 import { By, TimeoutError, } from "./web-primitives.js";
 export const LOGIN_DETECTION_SELECTORS = [
@@ -245,6 +245,12 @@ async function defaultVerificationPrompt(context) {
         "Please follow the instruction displayed in the browser.");
 }
 export const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+/** Button texts of the "send SMS code" page; Auth0 localizes by browser language. */
+export const CODE_CHALLENGE_BUTTON_TEXTS = [
+    CODE_CHALLENGE_BUTTON_TEXT,
+    "Send code",
+    "Send Code",
+];
 /** Candidate selectors for the SMS code field, most specific first. */
 export const SMS_CODE_INPUT_SELECTORS = [
     "input[autocomplete='one-time-code']",
@@ -292,6 +298,16 @@ async function findSmsCodeInput(controller, timeoutSeconds, pollIntervalMs) {
         }
         await controller.webSleep(pollIntervalMs, pollIntervalMs);
     }
+}
+async function findCodeChallengeButton(controller, timeoutSeconds) {
+    for (const [index, text] of CODE_CHALLENGE_BUTTON_TEXTS.entries()) {
+        // The page has settled after the first probe; later probes stay short.
+        const timeout = index === 0 ? timeoutSeconds : 0.5;
+        if (await controller.webProbe(By.TEXT, text, { timeout })) {
+            return text;
+        }
+    }
+    return null;
 }
 async function findSmsCodeSubmit(controller) {
     for (const selector of SMS_CODE_SUBMIT_SELECTORS) {
@@ -352,10 +368,8 @@ async function describeCodePageStructure(controller) {
  */
 export async function handleCodeChallengePage(controller, options = {}) {
     const resolvedOptions = loginOptionsWithDefaults(options);
-    const challenge = await controller.webProbe(By.TEXT, CODE_CHALLENGE_BUTTON_TEXT, {
-        timeout: resolvedOptions.quickDomTimeout,
-    });
-    if (!challenge) {
+    const challengeText = await findCodeChallengeButton(controller, resolvedOptions.quickDomTimeout);
+    if (!challengeText) {
         return false;
     }
     const provideCode = resolvedOptions.onSmsCode ?? promptForSmsCode;
@@ -363,7 +377,7 @@ export async function handleCodeChallengePage(controller, options = {}) {
         throw new Error("Kleinanzeigen asks for an SMS verification code. Run this from an " +
             "interactive terminal. No code was requested.");
     }
-    await controller.webClick(By.TEXT, CODE_CHALLENGE_BUTTON_TEXT);
+    await controller.webClick(By.TEXT, challengeText);
     const selector = await findSmsCodeInput(controller, resolvedOptions.smsCodeInputTimeout, resolvedOptions.pollIntervalMs);
     if (!selector) {
         console.error(`SMS code field not found. Page structure: ${await describeCodePageStructure(controller)}`);
@@ -439,6 +453,13 @@ export async function waitForPostAuth0SubmitTransition(controller, credentials, 
     }
     if (await isLoggedIn(controller, credentials, resolvedOptions)) {
         return;
+    }
+    if (await controller.webProbe(By.CSS_SELECTOR, CAPTCHA_IFRAME_SELECTOR, {
+        timeout: resolvedOptions.quickDomTimeout,
+    })) {
+        console.error(`Login page structure: ${await describeCodePageStructure(controller)}`);
+        throw new Error("Kleinanzeigen shows a captcha after the password step; the login was not " +
+            `completed (url=${currentPageUrl(controller)})`);
     }
     if (await handleCodeChallengePage(controller, resolvedOptions)) {
         return;

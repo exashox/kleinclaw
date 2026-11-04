@@ -5,6 +5,8 @@
 - handle the Kleinanzeigen "Code senden" SMS challenge after the password step:
   request the code, let the account owner type it in an interactive terminal,
   enter and submit it; without a terminal no code is requested
+- recognize the English "Send code" page as well
+- stop with a clear message when a captcha appears after the password step
 - prefer Auth0's primary submit button over "resend code" and tick "remember
   this device" when offered
 - print the code page structure (no field values) when the code field is not

@@ -74,6 +74,8 @@ export declare function getLoginState(controller: LoginController, credentials: 
 }): Promise<LoginDetectionResult>;
 export declare function isLoggedIn(controller: LoginController, credentials: LoginConfig, options?: LoginOptions): Promise<boolean>;
 export declare const CODE_CHALLENGE_BUTTON_TEXT = "Code senden";
+/** Button texts of the "send SMS code" page; Auth0 localizes by browser language. */
+export declare const CODE_CHALLENGE_BUTTON_TEXTS: readonly string[];
 /** Candidate selectors for the SMS code field, most specific first. */
 export declare const SMS_CODE_INPUT_SELECTORS: readonly string[];
 /**
