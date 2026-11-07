@@ -1,5 +1,5 @@
 name: Sally Browser
-version: "0.1.0"
+version: "0.1.1"
 slug: sally_browser
 description: >-
   Sichtbarer Chromium für KleinClaw/Sally. Bedienung über noVNC in der

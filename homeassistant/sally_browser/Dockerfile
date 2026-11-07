@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:bookworm
 FROM ${BUILD_FROM}
 
 RUN apt-get update \
@@ -15,7 +15,7 @@ RUN apt-get update \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cp -rL /usr/share/novnc /opt/novnc && rm -f /opt/novnc/index.html
+RUN cp -r /usr/share/novnc /opt/novnc && rm -f /opt/novnc/index.html
 COPY novnc-index.html /opt/novnc/index.html
 COPY run.sh /run.sh
 # Guard against CRLF when the folder is copied from a Windows checkout.
