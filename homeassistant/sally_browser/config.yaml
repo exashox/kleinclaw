@@ -1,0 +1,21 @@
+name: Sally Browser
+version: "0.1.0"
+slug: sally_browser
+description: >-
+  Sichtbarer Chromium für KleinClaw/Sally. Bedienung über noVNC in der
+  Seitenleiste, Fernsteuerung durch miniclaw per CDP.
+url: https://git.exalabs.de/nero/kleinclaw
+arch:
+  - amd64
+  - aarch64
+init: false
+ingress: true
+ingress_port: 6080
+panel_icon: mdi:web
+panel_title: Sally Browser
+options:
+  resolution: "1600x900"
+  start_url: "https://www.kleinanzeigen.de/m-meine-anzeigen.html"
+schema:
+  resolution: match(^\d{3,4}x\d{3,4}$)
+  start_url: url

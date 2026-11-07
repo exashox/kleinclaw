@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildBrowserSessionPlan, writeInitialPrefs, } from "./browser.js";
+import { resolveRemoteDebuggingHost } from "./browser/browser-arguments.js";
 import { connectCdpBrowser, launchCdpBrowser, } from "./browser/cdp-adapter.js";
 export class LiveBrowserSessionDisabledError extends Error {
     constructor() {
@@ -86,7 +87,8 @@ export async function createBrowserSession(source, { allowLiveBrowser = false, c
         if (plan.remotePort === null) {
             throw new Error("Remote browser session plan is missing remotePort");
         }
-        browser = await driver.connectCdpBrowser(`http://${plan.remoteHost}:${plan.remotePort}`, timeout === undefined ? undefined : { timeout: timeout * 1000 });
+        const remoteHost = await resolveRemoteDebuggingHost(plan.remoteHost);
+        browser = await driver.connectCdpBrowser(`http://${remoteHost}:${plan.remotePort}`, timeout === undefined ? undefined : { timeout: timeout * 1000 });
         context = firstContext(browser);
     }
     else {

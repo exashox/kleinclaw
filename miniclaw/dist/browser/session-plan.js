@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { BrowserConfig } from "../model/config-model.js";
-import { remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, } from "./browser-arguments.js";
+import { isLoopbackDebuggingHost, remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, } from "./browser-arguments.js";
 export const DEFAULT_BROWSER_ARGS = [
     "--disable-crash-reporter",
     "--disable-domain-reliability",
@@ -207,6 +207,10 @@ export function buildBrowserSessionPlan(configOrBrowserConfig, { defaultUserData
             environment,
             warnings,
         };
+    }
+    if (!isLoopbackDebuggingHost(remoteHost)) {
+        throw new Error(`--remote-debugging-host=${remoteHost} requires --remote-debugging-port; ` +
+            "browsers launched by miniclaw stay on localhost.");
     }
     const browserArgs = [...DEFAULT_BROWSER_ARGS];
     const isEdge = binaryLocation.toLowerCase().includes("edge");

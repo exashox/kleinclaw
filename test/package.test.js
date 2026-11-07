@@ -390,6 +390,75 @@ describe("package install boundary", () => {
     assert.doesNotMatch(generatedConfig, /kleinanzeigen-bot/);
   });
 
+  it("attaches to private-network browsers only in connect mode", async () => {
+    const { buildBrowserSessionPlan } = await import("../miniclaw/dist/browser/session-plan.js");
+    const {
+      isPrivateIPv4,
+      remoteDebuggingHostFromArguments,
+      resolveRemoteDebuggingHost,
+    } = await import("../miniclaw/dist/browser/browser-arguments.js");
+    const { Config } = await import("../miniclaw/dist/model/config-model.js");
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-remote-host-"));
+    const fakeBrowser = path.join(tmp, "chromium");
+    await fs.writeFile(fakeBrowser, "");
+
+    for (const address of ["10.0.0.1", "127.0.0.1", "172.30.33.5", "192.168.1.20"]) {
+      assert.equal(isPrivateIPv4(address), true, address);
+    }
+    for (const address of ["0.0.0.0", "8.8.8.8", "172.32.0.1", "local-sally-browser"]) {
+      assert.equal(isPrivateIPv4(address), false, address);
+    }
+
+    assert.equal(
+      remoteDebuggingHostFromArguments(["--remote-debugging-host=local-sally-browser"]),
+      "local-sally-browser",
+    );
+    assert.equal(
+      remoteDebuggingHostFromArguments(["--remote-debugging-host=172.30.33.5"]),
+      "172.30.33.5",
+    );
+    for (const host of ["8.8.8.8", "0.0.0.0", "http://evil", "a_b"]) {
+      assert.throws(
+        () => remoteDebuggingHostFromArguments([`--remote-debugging-host=${host}`]),
+        /Invalid --remote-debugging-host value/,
+        host,
+      );
+    }
+
+    const connectPlan = buildBrowserSessionPlan(
+      new Config({
+        browser: {
+          arguments: [
+            "--remote-debugging-host=local-sally-browser",
+            "--remote-debugging-port=9223",
+          ],
+          binary_location: fakeBrowser,
+        },
+      }),
+      { cwd: tmp },
+    );
+    assert.equal(connectPlan.mode, "connect");
+    assert.equal(connectPlan.remoteHost, "local-sally-browser");
+    assert.equal(connectPlan.remotePort, 9223);
+
+    assert.throws(
+      () => buildBrowserSessionPlan(
+        new Config({
+          browser: {
+            arguments: ["--remote-debugging-host=local-sally-browser"],
+            binary_location: fakeBrowser,
+          },
+        }),
+        { cwd: tmp },
+      ),
+      /requires --remote-debugging-port/,
+    );
+
+    assert.equal(await resolveRemoteDebuggingHost("127.0.0.1"), "127.0.0.1");
+    assert.equal(await resolveRemoteDebuggingHost("172.30.33.5"), "172.30.33.5");
+    assert.equal(await resolveRemoteDebuggingHost("localhost"), "localhost");
+  });
+
   it("keeps the browser session planner on miniclaw CDP profile semantics", async () => {
     const {
       browserCandidatePaths,
