@@ -34,5 +34,12 @@ Heim-IP).
 
 ## Später
 
+- `npm audit` meldet 3 Schwachstellen (2 moderat, 1 hoch) in den
+  Laufzeit-Abhängigkeiten. Prüfen und gezielt aktualisieren, nicht per
+  `npm audit fix --force`.
+- Installation aus Git-Klon dokumentieren: nach `git clone` ist
+  `npm ci --omit=dev --ignore-scripts` nötig, sonst lädt das Plugin mit
+  Fehler. `openclaw plugins uninstall` löscht die Plugin-Konfiguration mit.
+
 - Windows-Testlauf reparieren: 16 Tests scheitern unter Windows an
   `\`-Pfadtrennern (Redaction und Package-Checks), unabhängig vom Feature-Code.
