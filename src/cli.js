@@ -1085,6 +1085,12 @@ function profileDirForBrowser(browser) {
   return path.join(os.homedir(), ...choice.profileDir);
 }
 
+function browserArgumentValue(args, flag) {
+  const prefix = `${flag}=`;
+  const match = (args ?? []).find((entry) => String(entry).startsWith(prefix));
+  return match ? String(match).slice(prefix.length).trim() : "";
+}
+
 function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers }) {
   const autoBrowser = effectiveMiniclawAutoBrowser(detectedBrowsers);
   const configuredBinaryLocation = browserConfig.binary_location;
@@ -1101,6 +1107,17 @@ function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers 
     !browserConfig.user_data_dir && cliConfig.workspaceMode === "portable"
       ? path.join(cliConfig.cwd, ".temp", "browser-profile")
       : "";
+  const remotePort = browserArgumentValue(browserConfig.arguments, "--remote-debugging-port");
+  const connection = remotePort
+    ? {
+        mode: "connect",
+        remoteHost:
+          browserArgumentValue(browserConfig.arguments, "--remote-debugging-host") || "127.0.0.1",
+        remotePort: Number(remotePort),
+        note: "miniclaw attaches to an already running browser; local binary, " +
+          "private-window, and profile settings below are not used.",
+      }
+    : { mode: "launch" };
 
   return {
     ok: true,
@@ -1110,6 +1127,7 @@ function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers 
       exists: true,
       isFile: true,
     },
+    connection,
     browser: {
       supportedChoices: ["auto", ...SUPPORTED_BROWSER_IDS],
       configured: {

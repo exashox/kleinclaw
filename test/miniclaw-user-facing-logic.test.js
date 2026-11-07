@@ -267,6 +267,19 @@ describe("miniclaw browser diagnostics", () => {
     assert.match(messages.join("\n"), /fail: Browser binary not found: \/missing\/chromium/);
     assert.match(messages.join("\n"), /fail: Chrome 136\+ configuration validation failed/);
     assert.match(messages.join("\n"), /Browser process inspection skipped/);
+
+    const external = buildBrowserDiagnosticReport(new Config({
+      browser: {
+        arguments: [
+          "--remote-debugging-host=local-sally-browser",
+          "--remote-debugging-port=9223",
+        ],
+        userDataDir: "",
+      },
+    }));
+    const externalMessages = external.lines.map((line) => `${line.status}: ${line.message}`).join("\n");
+    assert.match(externalMessages, /ok: Connect mode: attaching to an external browser at local-sally-browser:9223/);
+    assert.doesNotMatch(externalMessages, /Chrome 136\+ configuration validation failed/);
   });
 
   it("extracts remote Chrome version diagnostics without launching a browser", async () => {

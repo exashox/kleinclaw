@@ -358,7 +358,34 @@ describe("browser config tools", () => {
       "--disable-dev-shm-usage",
       "--no-sandbox",
     ]);
+    assert.deepEqual(status.connection, { mode: "launch" });
     assert.doesNotMatch(JSON.stringify(status), /should-not-leak|hidden@example/);
+  });
+
+  it("reports connect mode for an external browser", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-browser-"));
+    const mockConfig = path.join(tmp, "config.yaml");
+    await fs.writeFile(
+      mockConfig,
+      [
+        "browser:",
+        "  arguments:",
+        "    - --remote-debugging-host=local-sally-browser",
+        "    - --remote-debugging-port=9223",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const status = await getKleinanzeigenBrowserStatus(withCommandRunner({
+      configPath: mockConfig,
+      workingDirectory: tmp,
+      workspaceMode: "portable",
+    }));
+
+    assert.equal(status.connection.mode, "connect");
+    assert.equal(status.connection.remoteHost, "local-sally-browser");
+    assert.equal(status.connection.remotePort, 9223);
+    assert.match(status.connection.note, /already running browser/);
   });
 
   it("updates only safe browser keys after confirmation", async () => {

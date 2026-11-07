@@ -9,8 +9,10 @@ import fs from "node:fs";
 import { promisify } from "node:util";
 
 import {
+  isLoopbackDebuggingHost,
   remoteDebuggingHostFromArguments,
   remoteDebuggingPortFromArguments,
+  resolveRemoteDebuggingHost,
 } from "./browser-arguments.js";
 import { getCompatibleBrowser } from "./session-plan.js";
 import { type Config } from "../model/config-model.js";
@@ -113,7 +115,8 @@ export async function detectChromeVersionFromRemoteDebugging(
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout * 1000);
-    const response = await fetch(`http://${host}:${port}/json/version`, {
+    const address = await resolveRemoteDebuggingHost(host);
+    const response = await fetch(`http://${address}:${port}/json/version`, {
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -246,6 +249,14 @@ export function buildBrowserDiagnosticReport(config: Config): BrowserDiagnosticR
     lines.push({
       status: "info",
       message: "Chrome 136+ validation skipped because remote debugging is not configured.",
+    });
+  } else if (!isLoopbackDebuggingHost(remoteDebuggingHostFromArguments(browserConfig.arguments))) {
+    // The browser runs elsewhere (e.g. the Sally Browser add-on) and owns its profile.
+    lines.push({
+      status: "ok",
+      message: "Connect mode: attaching to an external browser at " +
+        `${remoteDebuggingHostFromArguments(browserConfig.arguments)}:${remoteDebuggingPort}; ` +
+        "local binary and profile settings are not used.",
     });
   } else {
     const [chrome136Valid, chrome136Message] = validateChrome136Configuration(
