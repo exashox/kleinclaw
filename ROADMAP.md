@@ -19,9 +19,10 @@ Heim-IP).
 
 ## Als Nächstes
 
-1. **Sally Browser live verifizieren**: Add-on auf HA OS bauen, Ingress/noVNC
-   prüfen, manuell einloggen, `kleinanzeigen_status` und `kleinanzeigen_verify`
-   über den Connect-Modus laufen lassen.
+1. **Sally Browser live verifizieren**: ~~Add-on auf HA OS bauen, Ingress/noVNC
+   prüfen, manuell einloggen~~ (erledigt 2026-11-07). Offen:
+   `kleinanzeigen_status` und `kleinanzeigen_verify` über den Connect-Modus
+   aus dem OpenClaw-Add-on laufen lassen.
 2. **Preisrecherche** (`kleinanzeigen_price_research`): Aus Beschreibung und
    Bildern Suchbegriffe ableiten, über den Sally Browser vergleichbare Anzeigen
    suchen und Preisspanne, Median, Anzahl Treffer sowie typische Angaben
