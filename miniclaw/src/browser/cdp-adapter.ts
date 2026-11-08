@@ -15,7 +15,28 @@ import {
   type WebLocator,
   type WebPage,
 } from "../web/types.js";
+import { isLoopbackDebuggingHost } from "./browser-arguments.js";
 import { type BrowserSessionPlan } from "./session-plan.js";
+
+const UPLOAD_MIME_TYPES: Record<string, string> = {
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+
+const TRANSFER_INPUT_FILES_FUNCTION = `function (files) {
+  const transfer = new DataTransfer();
+  for (const file of files) {
+    const bytes = Uint8Array.from(atob(file.data), (char) => char.charCodeAt(0));
+    transfer.items.add(new File([bytes], file.name, { type: file.type }));
+  }
+  this.files = transfer.files;
+  this.dispatchEvent(new Event("input", { bubbles: true }));
+  this.dispatchEvent(new Event("change", { bubbles: true }));
+}`;
 
 interface JsonTarget {
   id?: string;
@@ -781,14 +802,38 @@ export class CdpLocator implements WebLocator {
     if (!handle) {
       throw timeoutError("File input not found");
     }
+    const resolvedFiles = (Array.isArray(files) ? files : [files]).map((file) => path.resolve(file));
+    if (!isLoopbackDebuggingHost(new URL(this.page.endpoint).hostname)) {
+      await this.transferInputFiles(handle.objectId, resolvedFiles);
+      return;
+    }
     const params: Record<string, unknown> = {
-      files: (Array.isArray(files) ? files : [files]).map((file) => path.resolve(file)),
+      files: resolvedFiles,
       objectId: handle.objectId,
     };
     if (handle.backendNodeId !== undefined) {
       params.backendNodeId = handle.backendNodeId;
     }
     await this.page.client.send("DOM.setFileInputFiles", params);
+  }
+
+  /**
+   * A browser on another host (e.g. a browser add-on in a sibling container) cannot open
+   * local paths, so the file bytes are handed to the input through the page.
+   */
+  private async transferInputFiles(objectId: string, files: string[]): Promise<void> {
+    const payload = await Promise.all(files.map(async (file) => ({
+      name: path.basename(file),
+      type: UPLOAD_MIME_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream",
+      data: (await fs.readFile(file)).toString("base64"),
+    })));
+    const response = await this.page.client.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: TRANSFER_INPUT_FILES_FUNCTION,
+      arguments: [{ value: payload }],
+      userGesture: true,
+    });
+    throwCdpException(response, "Runtime.callFunctionOn failed");
   }
 
   async textContent(): Promise<string | null> {

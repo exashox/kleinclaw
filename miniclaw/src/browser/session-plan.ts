@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { BrowserConfig, type Config } from "../model/config-model.js";
 import {
+  isLoopbackDebuggingHost,
   remoteDebuggingHostFromArguments,
   remoteDebuggingPortFromArguments,
 } from "./browser-arguments.js";
@@ -289,6 +290,13 @@ export function buildBrowserSessionPlan(
       environment,
       warnings,
     };
+  }
+
+  if (!isLoopbackDebuggingHost(remoteHost)) {
+    throw new Error(
+      `--remote-debugging-host=${remoteHost} requires --remote-debugging-port; ` +
+        "browsers launched by miniclaw stay on localhost.",
+    );
   }
 
   const browserArgs = [...DEFAULT_BROWSER_ARGS];

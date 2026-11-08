@@ -140,6 +140,8 @@ export interface PublishAdFormOptions
   adConfig?: Record<string, unknown>;
   adFile: string;
   dismissConsentBanner?: () => Promise<void>;
+  /** Fill the form completely but stop before submitting it. */
+  fillOnly?: boolean;
   mode?: AdUpdateStrategy;
   now?: () => Date;
   rootUrl: string;
@@ -151,6 +153,7 @@ export interface PublishAdFormOptions
 
 export interface PublishAdFormResult {
   adConfig?: Record<string, unknown>;
-  adId: number;
+  /** Null when the form was only filled (fillOnly). */
+  adId: number | null;
   removedImageCount: number;
 }

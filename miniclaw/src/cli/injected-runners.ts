@@ -3,6 +3,8 @@ import { runDownloadAdsBatch } from "../download-orchestration.js";
 import { runExtendAdsBatch } from "../extend-orchestration.js";
 import { saveDataFile } from "../io.js";
 import { isNumericIdSelector } from "../ad-selector.js";
+import { AdUpdateStrategy } from "../model/ad-model.js";
+import { type LoadedAd } from "../selection.js";
 import {
   type PublishedAdState,
   runPublishAdsBatch,
@@ -72,6 +74,37 @@ export function hasInjectedPublishUpdateHandlers(
   return false;
 }
 
+/**
+ * Fills the publish form for exactly one ad and stops before submitting, so
+ * the user can review it in the browser. Nothing is deleted or saved.
+ */
+async function runFillOnlyPublish(
+  ads: readonly LoadedAd[],
+  sideEffects: SideEffectHandlers,
+): Promise<number> {
+  if (ads.length !== 1) {
+    throw new Error(
+      `--fill-only needs exactly one selected ad, got ${ads.length}. ` +
+        "Scope the run to a single ad folder.",
+    );
+  }
+  const [loadedAd] = ads as [LoadedAd];
+  await sideEffects.publishAd!({
+    ad: loadedAd.ad,
+    adFile: loadedAd.filePath,
+    attempt: 1,
+    mode: AdUpdateStrategy.Replace,
+    publishedAds: [],
+    raw: loadedAd.raw,
+    relativePath: loadedAd.relativePath,
+  });
+  printDoneBlock(
+    `DONE: Filled the publish form for "${loadedAd.ad.title}" without submitting. ` +
+      "Review it in the browser and click \"Anzeige aufgeben\" to publish.",
+  );
+  return 0;
+}
+
 export async function runInjectedPublishUpdateCommand(
   parsed: ParsedArgs,
   sideEffects: SideEffectHandlers,
@@ -86,6 +119,10 @@ export async function runInjectedPublishUpdateCommand(
     return 0;
   }
   const { ads, config, publishedAds } = loadedContext;
+
+  if (parsed.command === "publish" && parsed.fillOnly) {
+    return await runFillOnlyPublish(ads, sideEffects);
+  }
 
   const commonOptions = {
     captureError: sideEffects.captureError,

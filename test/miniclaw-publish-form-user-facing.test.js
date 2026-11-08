@@ -410,3 +410,21 @@ describe("miniclaw publish-form category suggestions", () => {
     );
   });
 });
+
+describe("miniclaw category dialog", () => {
+  it("maps configured category IDs to the dialog's display name path", async () => {
+    const { categoryNamePath } = await import(
+      "../miniclaw/dist/publish-form/category-selection.js"
+    );
+    assert.deepEqual(categoryNamePath("210/211/bootszubehoer"), [
+      "Auto, Rad & Boot",
+      "Boote & Bootszubehör",
+      "Bootszubehör",
+    ]);
+    assert.deepEqual(categoryNamePath("Haus & Garten > Heimtextilien"), [
+      "Haus & Garten",
+      "Heimtextilien",
+    ]);
+    assert.throws(() => categoryNamePath("999/999/unknown"), /no known display name/);
+  });
+});

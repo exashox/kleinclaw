@@ -27,7 +27,7 @@ export interface BrowserPublishController extends PublishingFormController {
     }): Promise<string>;
     webRequest(url: string, method?: string, validResponseCodes?: number | Iterable<number>, headers?: Record<string, string> | null): Promise<WebResponse>;
 }
-export type BrowserPublishFormOptions = Pick<PublishAdFormOptions, "autoRestart" | "captchaDetectionTimeout" | "confirmationTimeout" | "dismissConsentBanner" | "imageUploadTimeout" | "onManualCaptcha" | "onPaymentForm" | "quickDomTimeout" | "restartDelaySeconds" | "scrollPageDown" | "waitForConfirmation" | "waitForImageUpload">;
+export type BrowserPublishFormOptions = Pick<PublishAdFormOptions, "autoRestart" | "captchaDetectionTimeout" | "confirmationTimeout" | "dismissConsentBanner" | "fillOnly" | "imageUploadTimeout" | "onManualCaptcha" | "onPaymentForm" | "quickDomTimeout" | "restartDelaySeconds" | "scrollPageDown" | "waitForConfirmation" | "waitForImageUpload">;
 export interface BrowserPublishUpdateSideEffects {
     captureError?: CapturePublishError;
     close(): Promise<void>;

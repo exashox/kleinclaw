@@ -16,6 +16,7 @@ export interface ParsedArgs {
     logfileArg: string | null;
     workspaceMode: "portable" | "xdg" | null;
     keepOldAds: boolean;
+    fillOnly: boolean;
     allowLiveBrowser: boolean;
     verbose: boolean;
     lang: string | null;

@@ -12,6 +12,7 @@ import {
   writeInitialPrefs,
   type BrowserSessionPlan,
 } from "./browser.js";
+import { resolveRemoteDebuggingHost } from "./browser/browser-arguments.js";
 import {
   connectCdpBrowser,
   launchCdpBrowser,
@@ -172,8 +173,9 @@ export async function createBrowserSession(
     if (plan.remotePort === null) {
       throw new Error("Remote browser session plan is missing remotePort");
     }
+    const remoteHost = await resolveRemoteDebuggingHost(plan.remoteHost);
     browser = await driver.connectCdpBrowser(
-      `http://${plan.remoteHost}:${plan.remotePort}`,
+      `http://${remoteHost}:${plan.remotePort}`,
       timeout === undefined ? undefined : { timeout: timeout * 1000 },
     );
     context = firstContext(browser);

@@ -368,6 +368,47 @@ describe("miniclaw injected command messages", () => {
     assert.match(lines.join("\n"), /DONE: No changed ads found/);
   });
 
+  it("fills exactly one ad without deleting, waiting for results, or retrying", async () => {
+    assert.equal(
+      parseArgs(["node", "miniclaw", "publish", "--fill-only"]).fillOnly,
+      true,
+    );
+
+    const calls = [];
+    const sideEffects = {
+      deleteAd: async () => calls.push("delete"),
+      fetchPublishedAds: async () => [{ id: 1, title: "old" }],
+      publishAd: async (context) => calls.push(["publish", context.ad.title, context.attempt]),
+      waitForPublishingResult: async () => calls.push("wait"),
+    };
+    const loadedAd = {
+      ad: { title: "Schreibtischlampe" },
+      filePath: "/ads/lamp/ad.yaml",
+      raw: {},
+      relativePath: "lamp/ad.yaml",
+    };
+
+    const { lines, result } = await captureStderr(() =>
+      runInjectedPublishUpdateCommand(
+        parsedArgs({ fillOnly: true }),
+        sideEffects,
+        { ads: [loadedAd], config: new Config({ categories: {} }) },
+      ),
+    );
+    assert.equal(result, 0);
+    assert.deepEqual(calls, [["publish", "Schreibtischlampe", 1]]);
+    assert.match(lines.join("\n"), /without submitting/);
+
+    await assert.rejects(
+      runInjectedPublishUpdateCommand(
+        parsedArgs({ fillOnly: true }),
+        sideEffects,
+        { ads: [loadedAd, loadedAd], config: new Config({ categories: {} }) },
+      ),
+      /--fill-only needs exactly one selected ad, got 2/,
+    );
+  });
+
   it("keeps user-visible DONE and browser-gate messages stable", () => {
     assert.equal(noAdsMessage("delete"), "DONE: No ads to delete found.");
     assert.equal(sideEffectDoneMessage("publish", 2, 1), (

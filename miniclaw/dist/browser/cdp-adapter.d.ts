@@ -100,6 +100,11 @@ export declare class CdpLocator implements WebLocator {
     type(value: string): Promise<void>;
     sendFile(file: string): Promise<void>;
     setInputFiles(files: string | string[]): Promise<void>;
+    /**
+     * A browser on another host (e.g. a browser add-on in a sibling container) cannot open
+     * local paths, so the file bytes are handed to the input through the page.
+     */
+    private transferInputFiles;
     textContent(): Promise<string | null>;
     inputValue(): Promise<string>;
     isChecked(): Promise<boolean>;

@@ -124,6 +124,7 @@ export async function runLiveBrowserCommand(parsed, createLiveSideEffects, works
                 command: parsed.command,
                 configPath: parsed.configPath,
                 diagnosticsDir: workspace?.diagnosticsDir,
+                fillOnly: parsed.command === "publish" && parsed.fillOnly,
                 logFilePath: parsed.logfilePath,
                 workspaceBrowserProfileDir: workspace?.browserProfileDir,
             }));

@@ -37,6 +37,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     logfileArg: null,
     workspaceMode: null,
     keepOldAds: false,
+    fillOnly: false,
     allowLiveBrowser: false,
     verbose: false,
     lang: null,
@@ -60,6 +61,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--keep-old") {
       parsed.keepOldAds = true;
+      continue;
+    }
+    if (arg === "--fill-only") {
+      parsed.fillOnly = true;
       continue;
     }
     if (arg === "--allow-live-browser") {

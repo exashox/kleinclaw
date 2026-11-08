@@ -30,7 +30,7 @@ function publishFormUrl(rootUrl, ad, mode) {
     }
     return `${rootUrl}/p-anzeige-aufgeben-schritt2.html`;
 }
-export async function publishAdForm(controller, ad, { adConfig, adFile, autoRestart, captchaDetectionTimeout, confirmationTimeout, dismissConsentBanner, imageUploadTimeout, mode = AdUpdateStrategy.Replace, now = () => new Date(), onManualCaptcha, onPaymentForm, quickDomTimeout, recoverAdId, restartDelaySeconds, rootUrl, saveAdConfig, scrollPageDown, waitForConfirmation, waitForImageUpload, }) {
+export async function publishAdForm(controller, ad, { adConfig, adFile, autoRestart, captchaDetectionTimeout, confirmationTimeout, dismissConsentBanner, fillOnly = false, imageUploadTimeout, mode = AdUpdateStrategy.Replace, now = () => new Date(), onManualCaptcha, onPaymentForm, quickDomTimeout, recoverAdId, restartDelaySeconds, rootUrl, saveAdConfig, scrollPageDown, waitForConfirmation, waitForImageUpload, }) {
     await controller.webOpen(publishFormUrl(rootUrl, ad, mode), { reloadIfAlreadyOpen: true });
     if (dismissConsentBanner) {
         await dismissConsentBanner();
@@ -75,6 +75,10 @@ export async function publishAdForm(controller, ad, { adConfig, adFile, autoRest
         scrollPageDown,
     });
     await setDeferredTitleField(controller, ad);
+    if (fillOnly) {
+        // Leave the filled form open for the user to review and submit by hand.
+        return { adConfig, adId: null, removedImageCount };
+    }
     const adId = await submitAdForm(controller, ad, {
         confirmationTimeout,
         onPaymentForm,

@@ -65,6 +65,7 @@ Options:
   --ads=all|due|new|changed|<id(s)>
   --force
   --keep-old
+  --fill-only
   --allow-live-browser
   --config=<PATH>
   --workspace-mode=portable|xdg

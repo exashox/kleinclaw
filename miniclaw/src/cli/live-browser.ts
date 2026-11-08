@@ -163,6 +163,7 @@ export async function runLiveBrowserCommand(
           command: parsed.command,
           configPath: parsed.configPath,
           diagnosticsDir: workspace?.diagnosticsDir,
+          fillOnly: parsed.command === "publish" && parsed.fillOnly,
           logFilePath: parsed.logfilePath,
           workspaceBrowserProfileDir: workspace?.browserProfileDir,
         })

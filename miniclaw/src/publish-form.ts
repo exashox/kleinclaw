@@ -174,6 +174,7 @@ export async function publishAdForm(
     captchaDetectionTimeout,
     confirmationTimeout,
     dismissConsentBanner,
+    fillOnly = false,
     imageUploadTimeout,
     mode = AdUpdateStrategy.Replace,
     now = () => new Date(),
@@ -242,6 +243,10 @@ export async function publishAdForm(
   });
 
   await setDeferredTitleField(controller, ad);
+  if (fillOnly) {
+    // Leave the filled form open for the user to review and submit by hand.
+    return { adConfig, adId: null, removedImageCount };
+  }
   const adId = await submitAdForm(controller, ad, {
     confirmationTimeout,
     onPaymentForm,

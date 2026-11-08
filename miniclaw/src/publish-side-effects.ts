@@ -103,6 +103,7 @@ export type BrowserPublishFormOptions = Pick<
   | "captchaDetectionTimeout"
   | "confirmationTimeout"
   | "dismissConsentBanner"
+  | "fillOnly"
   | "imageUploadTimeout"
   | "onManualCaptcha"
   | "onPaymentForm"
