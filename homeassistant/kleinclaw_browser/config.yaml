@@ -1,0 +1,20 @@
+name: KleinClaw Browser
+version: "0.3.0"
+slug: kleinclaw_browser
+description: >-
+  Sichtbarer Chromium für KleinClaw und OpenClaw-Agenten. Bedienung über
+  noVNC in der Seitenleiste, Fernsteuerung per Chrome DevTools Protocol.
+arch:
+  - amd64
+  - aarch64
+init: false
+ingress: true
+ingress_port: 6080
+panel_icon: mdi:web
+panel_title: KleinClaw Browser
+options:
+  resolution: "1600x900"
+  start_url: "https://www.kleinanzeigen.de/m-meine-anzeigen.html"
+schema:
+  resolution: match(^\d{3,4}x\d{3,4}$)
+  start_url: url

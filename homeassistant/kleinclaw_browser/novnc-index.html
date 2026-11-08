@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>KleinClaw Browser</title>
+<script>
+  // Behind HA ingress the page lives under /api/hassio_ingress/<token>/,
+  // so the websocket path has to be relative to that prefix.
+  const base = location.pathname.replace(/^\//, "").replace(/[^/]*$/, "");
+  location.replace(
+    "vnc.html?autoconnect=1&reconnect=1&resize=scale&path=" +
+      encodeURIComponent(base + "websockify"),
+  );
+</script>
