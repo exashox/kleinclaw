@@ -270,7 +270,11 @@ draft workflow. The key miniclaw constraints are:
 
 - `title`: 10 to 65 characters.
 - `description`: at most 4000 characters.
-- `category`: built-in category name, custom mapped name, or category ID.
+- `category`: built-in category name, custom mapped name, category ID, or the
+  full display path (`"Auto, Rad & Boot > Boote & Bootszubehör > Bootszubehör"`).
+  Use `kleinanzeigen_categories` to search paths by keyword. Publishing walks the
+  "Kategorie wählen" dialog level by level, matches entries tolerantly, and
+  lists the offered entries when a level does not match.
 - `images`: glob patterns relative to the ad config file.
 - `priceType: "FIXED"` requires `price`; `GIVE_AWAY` must not set `price`.
 
@@ -355,6 +359,12 @@ Tool call JSON for `kleinanzeigen_set_ad_active`:
   "active": true
 }
 ```
+
+Use `kleinanzeigen_set_ad_fields` to change `price` or `priceType` of one ad, or
+to mark it sold. `sold: true` writes `sold: true`, `sold_on`, and
+`active: false`, so neither publish nor the `due` republication picks it up
+again. `kleinanzeigen_list_ads` returns `priceType`, `createdOn`, `updatedOn`,
+`republicationInterval`, `sold`, and `soldOn` for reports.
 
 Recommended loop:
 

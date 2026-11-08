@@ -310,6 +310,9 @@ export function buildKleinanzeigenArgs(operation, params = {}, config = {}) {
   if (operation === "publish" && params.keepOld === true) {
     args.push("--keep-old");
   }
+  if (operation === "publish" && params.fillOnly === true) {
+    args.push("--fill-only");
+  }
 
   return args;
 }
@@ -764,12 +767,17 @@ function sanitizeAdYaml(text, { includeContact = false } = {}) {
 }
 
 function setYamlTopLevelActive(text, active) {
+  return setYamlTopLevelScalar(text, "active", active ? "true" : "false");
+}
+
+/** Replaces or inserts one top-level `key: value` line; `value` is already YAML. */
+function setYamlTopLevelScalar(text, key, value) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
-  const nextLine = `active: ${active ? "true" : "false"}`;
-  const activeIndex = lines.findIndex((line) => /^active\s*:/.test(line));
-  if (activeIndex !== -1) {
+  const nextLine = `${key}: ${value}`;
+  const keyIndex = lines.findIndex((line) => new RegExp(`^${key}\\s*:`).test(line));
+  if (keyIndex !== -1) {
     const next = [...lines];
-    next[activeIndex] = nextLine;
+    next[keyIndex] = nextLine;
     return next.join("\n");
   }
 
@@ -1085,6 +1093,12 @@ function profileDirForBrowser(browser) {
   return path.join(os.homedir(), ...choice.profileDir);
 }
 
+function browserArgumentValue(args, flag) {
+  const prefix = `${flag}=`;
+  const match = (args ?? []).find((entry) => String(entry).startsWith(prefix));
+  return match ? String(match).slice(prefix.length).trim() : "";
+}
+
 function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers }) {
   const autoBrowser = effectiveMiniclawAutoBrowser(detectedBrowsers);
   const configuredBinaryLocation = browserConfig.binary_location;
@@ -1101,6 +1115,17 @@ function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers 
     !browserConfig.user_data_dir && cliConfig.workspaceMode === "portable"
       ? path.join(cliConfig.cwd, ".temp", "browser-profile")
       : "";
+  const remotePort = browserArgumentValue(browserConfig.arguments, "--remote-debugging-port");
+  const connection = remotePort
+    ? {
+        mode: "connect",
+        remoteHost:
+          browserArgumentValue(browserConfig.arguments, "--remote-debugging-host") || "127.0.0.1",
+        remotePort: Number(remotePort),
+        note: "miniclaw attaches to an already running browser; local binary, " +
+          "private-window, and profile settings below are not used.",
+      }
+    : { mode: "launch" };
 
   return {
     ok: true,
@@ -1110,6 +1135,7 @@ function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers 
       exists: true,
       isFile: true,
     },
+    connection,
     browser: {
       supportedChoices: ["auto", ...SUPPORTED_BROWSER_IDS],
       configured: {
@@ -1317,7 +1343,13 @@ function parseAdSummary(text) {
     id: null,
     title: "",
     price: null,
+    priceType: null,
     category: "",
+    createdOn: null,
+    updatedOn: null,
+    republicationInterval: null,
+    sold: false,
+    soldOn: null,
     imageGlobs: [],
   };
   let inImages = false;
@@ -1336,8 +1368,20 @@ function parseAdSummary(text) {
         summary.title = value;
       } else if (topLevel[1] === "price") {
         summary.price = value || null;
+      } else if (topLevel[1] === "price_type") {
+        summary.priceType = value || null;
       } else if (topLevel[1] === "category") {
         summary.category = value;
+      } else if (topLevel[1] === "created_on") {
+        summary.createdOn = value || null;
+      } else if (topLevel[1] === "updated_on") {
+        summary.updatedOn = value || null;
+      } else if (topLevel[1] === "republication_interval") {
+        summary.republicationInterval = value ? Number(value) : null;
+      } else if (topLevel[1] === "sold") {
+        summary.sold = value === "true";
+      } else if (topLevel[1] === "sold_on") {
+        summary.soldOn = value || null;
       }
       continue;
     }
@@ -1890,6 +1934,42 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
   return { ok: true, operation: "list_ads", count: ads.length, ads };
 }
 
+function categorySearchKey(value) {
+  return String(value ?? "").toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Searches the built-in category table so an agent can pick the full display
+ * path ("A > B > C") for an ad. Every query word must appear in the path.
+ */
+export async function searchKleinanzeigenCategories(params = {}) {
+  const { BUILTIN_CATEGORIES } = await import(
+    new URL("../miniclaw/dist/resources/categories.js", import.meta.url).href
+  );
+  const terms = categorySearchKey(params.query).split(" ").filter(Boolean);
+  const limit = Math.min(Math.max(Number(params.limit) || 25, 1), 100);
+  const matches = Object.entries(BUILTIN_CATEGORIES)
+    .filter(([name]) => name.includes(">"))
+    .filter(([name, id]) => {
+      const haystack = `${categorySearchKey(name)} ${categorySearchKey(id)}`;
+      return terms.every((term) => haystack.includes(term));
+    })
+    .map(([name, id]) => ({ path: name, id }));
+  return {
+    ok: true,
+    operation: "categories",
+    query: params.query ?? "",
+    total: matches.length,
+    categories: matches.slice(0, limit),
+    note: "Write the chosen path into the ad's category, e.g. " +
+      "\"Auto, Rad & Boot > Boote & Bootszubehör > Bootszubehör\". " +
+      "The live dialog may label entries slightly differently; publish matches tolerantly " +
+      "and reports the offered entries if a level does not match.",
+  };
+}
+
 export function getKleinanzeigenAdSchema() {
   return {
     ok: true,
@@ -1927,7 +2007,7 @@ export function getKleinanzeigenAdSchema() {
         type: "OFFER or WANTED",
         title: "10 to 65 characters",
         description: "plain or multiline text, max 4000 characters",
-        category: "built-in category name, custom config mapping name, or category ID",
+        category: "full display path (search with kleinanzeigen_categories), built-in category name, custom config mapping name, or category ID",
         price: "whole euros preferred; required when price_type is FIXED",
         price_type: "FIXED, NEGOTIABLE, GIVE_AWAY, or NOT_APPLICABLE",
         images: "glob patterns relative to the ad config file",
@@ -2039,6 +2119,92 @@ export async function setKleinanzeigenAdActive(params = {}, config = {}) {
           "publish scoped to this ad only after verify succeeds",
         ]
       : ["the ad is no longer eligible for publish/update"],
+    ...localSuccessProcessFields(),
+  };
+}
+
+const AD_PRICE_TYPES = ["FIXED", "NEGOTIABLE", "GIVE_AWAY"];
+
+/**
+ * Changes selected top-level fields of one YAML ad: price, price_type, the
+ * sold marker, and the record of a publication done by hand. Marking an ad
+ * sold also deactivates it, so publish and the "due" republication skip it.
+ */
+export async function setKleinanzeigenAdFields(params = {}, config = {}, { now = new Date() } = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before changing ad fields");
+  }
+  const updates = [];
+  let publishedAdId = null;
+  if (params.publishedAdId !== undefined) {
+    publishedAdId = String(params.publishedAdId).trim();
+    if (!/^\d{6,15}$/.test(publishedAdId)) {
+      throw new Error("publishedAdId must be the numeric Kleinanzeigen ad ID");
+    }
+  }
+  if (params.price !== undefined) {
+    const price = Number(params.price);
+    if (!Number.isInteger(price) || price < 0 || price > 10_000_000) {
+      throw new Error("price must be a whole number of euros");
+    }
+    updates.push(["price", String(price)]);
+  }
+  if (params.priceType !== undefined) {
+    if (!AD_PRICE_TYPES.includes(params.priceType)) {
+      throw new Error(`priceType must be one of ${AD_PRICE_TYPES.join(", ")}`);
+    }
+    updates.push(["price_type", params.priceType]);
+  }
+  const sold = normalizeBoolean(params.sold, "sold");
+  if (sold !== undefined) {
+    updates.push(["sold", sold ? "true" : "false"]);
+    if (sold) {
+      updates.push(["sold_on", quoteYamlScalar(now.toISOString().slice(0, 10))]);
+      updates.push(["active", "false"]);
+    }
+  }
+  if (!updates.length && publishedAdId === null) {
+    throw new Error("set at least one of price, priceType, sold, publishedAdId");
+  }
+
+  const adConfigPath = await resolveSingleAdConfig(params, config);
+  const extension = path.extname(adConfigPath).toLowerCase();
+  if (![".yaml", ".yml"].includes(extension)) {
+    throw new Error("set_ad_fields currently supports only YAML ad configs");
+  }
+
+  const roots = await configuredAdRoots(config);
+  const root = roots.find((entry) => pathIsInside(adConfigPath, entry)) ?? path.dirname(adConfigPath);
+  const beforeText = await fs.readFile(adConfigPath, "utf8");
+  if (publishedAdId !== null) {
+    // Same fields miniclaw writes after its own publish, so "due" starts counting now.
+    const publishedOn = quoteYamlScalar(now.toISOString().replace(/\.\d{3}Z$/, "+00:00"));
+    updates.push(["id", publishedAdId], ["updated_on", publishedOn]);
+    if (!parseAdSummary(beforeText).createdOn) {
+      updates.push(["created_on", publishedOn]);
+    }
+  }
+  const afterText = updates.reduce(
+    (text, [key, value]) => setYamlTopLevelScalar(text, key, value),
+    beforeText,
+  );
+  const changed = afterText !== beforeText;
+  if (changed) {
+    await fs.writeFile(adConfigPath, afterText, "utf8");
+  }
+
+  return {
+    ok: true,
+    operation: "set_ad_fields",
+    changed,
+    adPath: displayPathForAd(adConfigPath, root),
+    previous: parseAdSummary(beforeText),
+    summary: parseAdSummary(afterText),
+    nextActions: sold
+      ? ["the ad is sold and no longer eligible for publish/update"]
+      : publishedAdId !== null && !updates.some(([key]) => key.startsWith("price"))
+        ? ["the ad is recorded as online; the due republication counts from now"]
+        : ["run scoped kleinanzeigen_verify, then update or republish this ad to apply the change"],
     ...localSuccessProcessFields(),
   };
 }

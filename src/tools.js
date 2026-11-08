@@ -13,7 +13,9 @@ import {
   readKleinanzeigenAd,
   runKleinanzeigenOperation,
   sanitizeText,
+  searchKleinanzeigenCategories,
   setKleinanzeigenAdActive,
+  setKleinanzeigenAdFields,
 } from "./cli.js";
 
 export const SIDE_EFFECT_TOOL_NAMES = new Set([
@@ -25,6 +27,7 @@ export const SIDE_EFFECT_TOOL_NAMES = new Set([
   "kleinanzeigen_browser_configure",
   "kleinanzeigen_draft_ad",
   "kleinanzeigen_set_ad_active",
+  "kleinanzeigen_set_ad_fields",
 ]);
 
 export function resolveApprovalToolNames(tools, config = {}) {
@@ -98,6 +101,21 @@ export function buildKleinanzeigenApprovalDescription({ toolName, params = {}, c
   }
   if (typeof params.keepOld === "boolean") {
     lines.push(`Keep old ads: ${params.keepOld}`);
+  }
+  if (params.fillOnly === true) {
+    lines.push("Fill only: form is filled, not submitted");
+  }
+  if (params.price !== undefined) {
+    lines.push(`Price: ${truncateText(String(params.price), 12)} EUR`);
+  }
+  if (typeof params.priceType === "string") {
+    lines.push(`Price type: ${truncateText(params.priceType, 12)}`);
+  }
+  if (typeof params.sold === "boolean") {
+    lines.push(`Sold: ${params.sold}`);
+  }
+  if (typeof params.publishedAdId === "string") {
+    lines.push(`Record published ad ID: ${truncateText(params.publishedAdId, 16)}`);
   }
   if (typeof params.selector === "string") {
     lines.push(`Selector: ${truncateText(params.selector, 44)}`);
@@ -532,6 +550,30 @@ function adSchemaTool(config) {
   });
 }
 
+function categoriesTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_categories",
+    label: "Kleinanzeigen Categories",
+    description:
+      "Search Kleinanzeigen categories by keyword and return full display paths with IDs " +
+      "to choose an ad's category.",
+    parameters: objectSchema({
+      query: {
+        type: "string",
+        description: "Keywords, e.g. \"boot zubehör\" or \"ladegerät\". All words must match.",
+      },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 100,
+        description: "Maximum results. Defaults to 25.",
+      },
+    }),
+    operation: "categories",
+    handler: (_toolConfig, params) => searchKleinanzeigenCategories(params),
+  });
+}
+
 function readAdTool(config) {
   return localTool(config, {
     name: "kleinanzeigen_read_ad",
@@ -619,6 +661,50 @@ function setAdActiveTool(config) {
     ),
     operation: "set_ad_active",
     handler: (toolConfig, params) => setKleinanzeigenAdActive(params, toolConfig),
+  });
+}
+
+function setAdFieldsTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_set_ad_fields",
+    label: "Kleinanzeigen Set Ad Fields",
+    description:
+      "Change price, price type, or the sold marker of one YAML ad config under trusted " +
+      "adRoots, or record a hand-submitted publication. Marking sold also deactivates the ad.",
+    parameters: objectSchema(
+      {
+        confirm: confirmSchema,
+        adConfigPaths: singleAdConfigPathsSchema,
+        adDirectories: singleAdDirectoriesSchema,
+        price: {
+          type: "integer",
+          minimum: 0,
+          description: "New price in whole euros.",
+        },
+        priceType: {
+          type: "string",
+          enum: ["FIXED", "NEGOTIABLE", "GIVE_AWAY"],
+          description: "FIXED (Festpreis), NEGOTIABLE (VB), or GIVE_AWAY (zu verschenken).",
+        },
+        sold: {
+          type: "boolean",
+          description:
+            "true marks the item sold (sets sold_on to today and active to false) so it is " +
+            "never republished.",
+        },
+        publishedAdId: {
+          type: "string",
+          pattern: "^[0-9]{6,15}$",
+          description:
+            "Record an ad that was submitted by hand (e.g. after fillOnly): writes this " +
+            "Kleinanzeigen ad ID and today as publication date, so the due republication " +
+            "does not publish it again.",
+        },
+      },
+      ["confirm"],
+    ),
+    operation: "set_ad_fields",
+    handler: (toolConfig, params) => setKleinanzeigenAdFields(params, toolConfig),
   });
 }
 
@@ -714,6 +800,7 @@ export function createKleinanzeigenTools(config = {}) {
     statusTool(config),
     listAdsTool(config),
     adSchemaTool(config),
+    categoriesTool(config),
     readAdTool(config),
     imagesListTool(config),
     browserStatusTool(config),
@@ -721,6 +808,7 @@ export function createKleinanzeigenTools(config = {}) {
     browserConfigureTool(config),
     draftAdTool(config),
     setAdActiveTool(config),
+    setAdFieldsTool(config),
     configuredOperationTool(config, {
       name: "kleinanzeigen_verify",
       label: "Kleinanzeigen Verify",
@@ -751,6 +839,13 @@ export function createKleinanzeigenTools(config = {}) {
         keepOld: {
           type: "boolean",
           description: "Keep old ads during republication.",
+        },
+        fillOnly: {
+          type: "boolean",
+          description:
+            "Fill the publish form for exactly one ad (scope with adDirectories or " +
+            "adConfigPaths) including images, but do not submit. The user reviews " +
+            "and submits in the browser. Nothing is published, deleted, or saved.",
         },
       }),
     }),

@@ -30,3 +30,6 @@ explicit user confirmation before running them.
   interpreting publish/update results.
 - Read [Tool Selection](references/tool-selection.md) when choosing tool
   parameters, selectors, or ad ID handling.
+- Read [Selling Routine](references/selling-routine.md) when you run listings
+  for the user over time: drafting from photos, republication, sold items,
+  weekly reports, price proposals, and buyer messages.

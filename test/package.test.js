@@ -146,6 +146,7 @@ describe("package install boundary", () => {
       "skills/kleinanzeigen-helper-skill/references/listing-discovery-scoping.md",
       "skills/kleinanzeigen-helper-skill/references/non-negotiables.md",
       "skills/kleinanzeigen-helper-skill/references/publish-result-caveats.md",
+      "skills/kleinanzeigen-helper-skill/references/selling-routine.md",
       "skills/kleinanzeigen-helper-skill/references/tool-selection.md",
       "skills/kleinanzeigen-helper-skill/references/workflow.md",
     ];
@@ -388,6 +389,75 @@ describe("package install boundary", () => {
     const generatedConfig = await fs.readFile(configPath, "utf8");
     assert.match(generatedConfig, /miniclaw:\/\/schemas\/config\.schema\.json/);
     assert.doesNotMatch(generatedConfig, /kleinanzeigen-bot/);
+  });
+
+  it("attaches to private-network browsers only in connect mode", async () => {
+    const { buildBrowserSessionPlan } = await import("../miniclaw/dist/browser/session-plan.js");
+    const {
+      isPrivateIPv4,
+      remoteDebuggingHostFromArguments,
+      resolveRemoteDebuggingHost,
+    } = await import("../miniclaw/dist/browser/browser-arguments.js");
+    const { Config } = await import("../miniclaw/dist/model/config-model.js");
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-remote-host-"));
+    const fakeBrowser = path.join(tmp, "chromium");
+    await fs.writeFile(fakeBrowser, "");
+
+    for (const address of ["10.0.0.1", "127.0.0.1", "172.30.33.5", "192.168.1.20"]) {
+      assert.equal(isPrivateIPv4(address), true, address);
+    }
+    for (const address of ["0.0.0.0", "8.8.8.8", "172.32.0.1", "kleinclaw-browser"]) {
+      assert.equal(isPrivateIPv4(address), false, address);
+    }
+
+    assert.equal(
+      remoteDebuggingHostFromArguments(["--remote-debugging-host=kleinclaw-browser"]),
+      "kleinclaw-browser",
+    );
+    assert.equal(
+      remoteDebuggingHostFromArguments(["--remote-debugging-host=172.30.33.5"]),
+      "172.30.33.5",
+    );
+    for (const host of ["8.8.8.8", "0.0.0.0", "http://evil", "a_b"]) {
+      assert.throws(
+        () => remoteDebuggingHostFromArguments([`--remote-debugging-host=${host}`]),
+        /Invalid --remote-debugging-host value/,
+        host,
+      );
+    }
+
+    const connectPlan = buildBrowserSessionPlan(
+      new Config({
+        browser: {
+          arguments: [
+            "--remote-debugging-host=kleinclaw-browser",
+            "--remote-debugging-port=9223",
+          ],
+          binary_location: fakeBrowser,
+        },
+      }),
+      { cwd: tmp },
+    );
+    assert.equal(connectPlan.mode, "connect");
+    assert.equal(connectPlan.remoteHost, "kleinclaw-browser");
+    assert.equal(connectPlan.remotePort, 9223);
+
+    assert.throws(
+      () => buildBrowserSessionPlan(
+        new Config({
+          browser: {
+            arguments: ["--remote-debugging-host=kleinclaw-browser"],
+            binary_location: fakeBrowser,
+          },
+        }),
+        { cwd: tmp },
+      ),
+      /requires --remote-debugging-port/,
+    );
+
+    assert.equal(await resolveRemoteDebuggingHost("127.0.0.1"), "127.0.0.1");
+    assert.equal(await resolveRemoteDebuggingHost("172.30.33.5"), "172.30.33.5");
+    assert.equal(await resolveRemoteDebuggingHost("localhost"), "localhost");
   });
 
   it("keeps the browser session planner on miniclaw CDP profile semantics", async () => {
@@ -873,6 +943,49 @@ describe("package install boundary", () => {
       backendNodeId: 987,
       files: [uploadFile],
       objectId: "file-input-1",
+    }]);
+
+    // A browser on another host gets the file bytes, not a path it cannot open.
+    await fs.writeFile(uploadFile, "jpeg-bytes");
+    const transferCalls = [];
+    const remoteUploadPage = new CdpPage("http://172.30.33.10:9223", {
+      id: "page-remote-upload",
+      type: "page",
+      url: "about:blank",
+      webSocketDebuggerUrl: "ws://172.30.33.10:9223/devtools/page/page-remote-upload",
+    }, 1);
+    remoteUploadPage.client = {
+      close: () => {},
+      connect: async () => {},
+      on: () => () => {},
+      send: async (method, params = {}) => {
+        if (method === "Runtime.evaluate") {
+          return { result: { objectId: "file-input-2" } };
+        }
+        if (method === "DOM.describeNode") {
+          return { node: { backendNodeId: 988 } };
+        }
+        if (method === "DOM.setFileInputFiles") {
+          throw new Error("remote browser must not receive local paths");
+        }
+        if (method === "Runtime.callFunctionOn") {
+          transferCalls.push(params);
+        }
+        return {};
+      },
+    };
+    await new CdpLocator(remoteUploadPage, [
+      { kind: "css", value: "input[type=file]", index: 0 },
+    ]).sendFile(uploadFile);
+    assert.equal(transferCalls.length, 1);
+    assert.equal(transferCalls[0].objectId, "file-input-2");
+    assert.match(transferCalls[0].functionDeclaration, /new DataTransfer\(\)/);
+    assert.deepEqual(transferCalls[0].arguments, [{
+      value: [{
+        name: "photo.jpg",
+        type: "image/jpeg",
+        data: Buffer.from("jpeg-bytes").toString("base64"),
+      }],
     }]);
 
     const evaluatedExpressions = [];

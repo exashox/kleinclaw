@@ -137,6 +137,18 @@ describe("kleinanzeigen CLI argument builder", () => {
     ]);
   });
 
+  it("passes fill-only to publish and nowhere else", () => {
+    const config = { configPath: "/secret/config.yaml" };
+    assert.ok(
+      buildKleinanzeigenArgs("publish", { confirm: true, fillOnly: true }, config)
+        .includes("--fill-only"),
+    );
+    assert.ok(
+      !buildKleinanzeigenArgs("update", { confirm: true, fillOnly: true }, config)
+        .includes("--fill-only"),
+    );
+  });
+
   it("requires confirmation and numeric ad IDs for delete", () => {
     assert.throws(
       () => buildKleinanzeigenArgs("delete", { adIds: ["123"] }),
@@ -358,7 +370,34 @@ describe("browser config tools", () => {
       "--disable-dev-shm-usage",
       "--no-sandbox",
     ]);
+    assert.deepEqual(status.connection, { mode: "launch" });
     assert.doesNotMatch(JSON.stringify(status), /should-not-leak|hidden@example/);
+  });
+
+  it("reports connect mode for an external browser", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-browser-"));
+    const mockConfig = path.join(tmp, "config.yaml");
+    await fs.writeFile(
+      mockConfig,
+      [
+        "browser:",
+        "  arguments:",
+        "    - --remote-debugging-host=kleinclaw-browser",
+        "    - --remote-debugging-port=9223",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const status = await getKleinanzeigenBrowserStatus(withCommandRunner({
+      configPath: mockConfig,
+      workingDirectory: tmp,
+      workspaceMode: "portable",
+    }));
+
+    assert.equal(status.connection.mode, "connect");
+    assert.equal(status.connection.remoteHost, "kleinclaw-browser");
+    assert.equal(status.connection.remotePort, 9223);
+    assert.match(status.connection.note, /already running browser/);
   });
 
   it("updates only safe browser keys after confirmation", async () => {
@@ -1700,5 +1739,115 @@ describe("redacted output handling", () => {
     assert.equal(detectUserActionRequest("# Captcha vorhanden! Bitte lösen Sie das Captcha.").needsUserAction, true);
     assert.equal(detectUserActionRequest("EOFError: EOF when reading a line").needsUserAction, true);
     assert.equal(detectUserActionRequest("DONE: No configuration errors found.").needsUserAction, false);
+  });
+});
+
+describe("category search", () => {
+  it("finds full display paths by keywords regardless of umlaut spelling", async () => {
+    const { searchKleinanzeigenCategories } = await import("../src/cli.js");
+    const result = await searchKleinanzeigenCategories({ query: "boot zubehoer" });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.operation, "categories");
+    assert.ok(result.categories.some((entry) =>
+      entry.path === "Auto, Rad & Boot > Boote & Bootszubehör > Bootszubehör" &&
+      entry.id === "210/211/bootszubehoer"
+    ));
+    assert.ok(result.categories.every((entry) => entry.path.includes(">")));
+
+    const limited = await searchKleinanzeigenCategories({ query: "auto", limit: 2 });
+    assert.equal(limited.categories.length, 2);
+    assert.ok(limited.total > 2);
+  });
+});
+
+describe("ad field changes", () => {
+  it("changes price and marks an ad sold so it is never republished", async () => {
+    const { setKleinanzeigenAdFields, listKleinanzeigenAds } = await import("../src/cli.js");
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-fields-"));
+    const adDir = path.join(tmp, "lamp");
+    const adPath = path.join(adDir, "ad.yaml");
+    await fs.mkdir(adDir, { recursive: true });
+    await fs.writeFile(
+      adPath,
+      [
+        "active: true",
+        "id: 3123456789",
+        "title: Schreibtischlampe aus Metall",
+        "price: 99",
+        "price_type: NEGOTIABLE",
+        "category: \"210/211/bootszubehoer\"",
+        "created_on: \"2026-11-08T10:00:00\"",
+        "updated_on: \"2026-11-08T10:00:00\"",
+        "images:",
+        "  - \"*.jpg\"",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const priced = await setKleinanzeigenAdFields(
+      { confirm: true, adDirectories: [adDir], price: 89, priceType: "FIXED" },
+      { adRoots: [tmp] },
+    );
+    assert.equal(priced.changed, true);
+    assert.equal(priced.previous.price, "99");
+    assert.equal(priced.summary.price, "89");
+    assert.equal(priced.summary.priceType, "FIXED");
+    assert.equal(priced.summary.active, true);
+
+    const sold = await setKleinanzeigenAdFields(
+      { confirm: true, adDirectories: [adDir], sold: true },
+      { adRoots: [tmp] },
+      { now: new Date("2026-11-14T12:00:00Z") },
+    );
+    const yaml = await fs.readFile(adPath, "utf8");
+    assert.equal(sold.summary.sold, true);
+    assert.equal(sold.summary.soldOn, "2026-11-14");
+    assert.equal(sold.summary.active, false);
+    assert.match(yaml, /^sold: true$/m);
+    assert.match(yaml, /^active: false$/m);
+    assert.match(yaml, /^  - "\*\.jpg"$/m);
+
+    const listed = await listKleinanzeigenAds({ adRoots: [tmp] });
+    assert.equal(listed.ads[0].createdOn, "2026-11-08T10:00:00");
+    assert.equal(listed.ads[0].sold, true);
+
+    await assert.rejects(
+      setKleinanzeigenAdFields({ confirm: true, adDirectories: [adDir] }, { adRoots: [tmp] }),
+      /set at least one of price, priceType, sold, publishedAdId/,
+    );
+
+    // A hand-submitted ad without ID/dates must not count as due afterwards.
+    const manualDir = path.join(tmp, "manual");
+    await fs.mkdir(manualDir, { recursive: true });
+    await fs.writeFile(
+      path.join(manualDir, "ad.yaml"),
+      ["active: true", "title: Von Hand veröffentlicht", "price: 10", ""].join("\n"),
+      "utf8",
+    );
+    const recorded = await setKleinanzeigenAdFields(
+      { confirm: true, adDirectories: [manualDir], publishedAdId: "3123456790" },
+      { adRoots: [tmp] },
+      { now: new Date("2026-11-08T20:15:30.123Z") },
+    );
+    assert.equal(recorded.summary.id, "3123456790");
+    assert.equal(recorded.summary.createdOn, "2026-11-08T20:15:30+00:00");
+    assert.equal(recorded.summary.updatedOn, "2026-11-08T20:15:30+00:00");
+    assert.equal(recorded.summary.active, true);
+    await assert.rejects(
+      setKleinanzeigenAdFields(
+        { confirm: true, adDirectories: [manualDir], publishedAdId: "abc" },
+        { adRoots: [tmp] },
+      ),
+      /numeric Kleinanzeigen ad ID/,
+    );
+    await assert.rejects(
+      setKleinanzeigenAdFields(
+        { confirm: true, adDirectories: [adDir], price: 9.5 },
+        { adRoots: [tmp] },
+      ),
+      /whole number/,
+    );
   });
 });

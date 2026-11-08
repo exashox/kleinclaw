@@ -26,3 +26,24 @@
 - After drafting, run scoped `kleinanzeigen_verify` against the new relative ad
   handle. Ask the user to review the sanitized draft summary before making it
   active or publishing it.
+
+## Choosing the Category
+
+- Decide the category yourself from what the item is (title, description,
+  images). Do not ask the user to pick from a list unless two categories fit
+  equally well.
+- Search with `kleinanzeigen_categories` using one or two keywords from the
+  item type (for a desk lamp try "lampe", then "haus garten").
+  Pick the most specific path that fits and write the full display path into
+  the ad's `category`, e.g.
+  `"Auto, Rad & Boot > Boote & Bootszubehör > Bootszubehör"`.
+- If nothing fits, search a broader word or the parent area and choose the
+  closest "Sonstige"/"Weitere" leaf rather than a wrong specific one.
+- `kleinanzeigen_publish` walks the live "Kategorie wählen" dialog level by
+  level and tolerates small label differences. If it fails with
+  "Category dialog has no entry matching", the error lists the entries offered
+  at that level: choose the right one, update `category` with that exact label
+  for that level, and retry with `fillOnly: true`.
+- Do not click through the category dialog with the generic browser tool to
+  publish; let `kleinanzeigen_publish` do it so images and fields are filled in
+  one consistent run.
