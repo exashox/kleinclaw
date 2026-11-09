@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 - 2026-11-09
+
+- add the **KleinClaw Browser** Home Assistant add-on (visible Chromium with
+  noVNC, persistent profile, DevTools proxy reachable by add-on hostname); the
+  repository root is now installable as a Home Assistant add-on repository
+- let miniclaw attach to a browser in a sibling container (private IPv4 or
+  local hostname) and transfer upload images as bytes to remote browsers
+- support the new "Kategorie wählen" dialog by walking the category path level
+  by level; add `kleinanzeigen_categories` to search categories by name
+- add `fillOnly` to `kleinanzeigen_publish` to fill the form without submitting
+- add `kleinanzeigen_set_ad_fields` for price, price type, sold state and
+  recording the ID of an ad published by hand
+- show connect mode in `kleinanzeigen_browser_status` and skip local binary
+  checks in `kleinanzeigen_browser_check` when attaching to an external browser
+- add a selling routine reference to the helper skill
+
 ## 0.2.4
 
 - stop with a clear "do not retry for 24 hours" message when Kleinanzeigen
