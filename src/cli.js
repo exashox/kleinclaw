@@ -1071,6 +1071,9 @@ function displayBrowserProfilePath(filePath, baseDir, { allowWorkspaceProfile = 
 }
 
 function redactBrowserArgument(argument, baseDir) {
+  if (String(argument).startsWith("--remote-debugging-token=")) {
+    return "--remote-debugging-token=[redacted]";
+  }
   const match = /^--user-data-dir=(.*)$/.exec(argument);
   if (!match) {
     return argument;
@@ -1122,6 +1125,9 @@ function buildBrowserStatusPayload({ cliConfig, browserConfig, detectedBrowsers 
         remoteHost:
           browserArgumentValue(browserConfig.arguments, "--remote-debugging-host") || "127.0.0.1",
         remotePort: Number(remotePort),
+        accessTokenConfigured: Boolean(
+          browserArgumentValue(browserConfig.arguments, "--remote-debugging-token"),
+        ),
         note: "miniclaw attaches to an already running browser; local binary, " +
           "private-window, and profile settings below are not used.",
       }
@@ -3022,6 +3028,115 @@ export async function getKleinanzeigenStatus(config = {}) {
     stdout: "",
     stderr: versionResult.error || helpResult?.error ? firstNonEmptyLine(helpText || versionText) : "",
   };
+}
+
+const BROWSER_READ_MARKER = "KLEINCLAW_RESULT ";
+const BROWSER_READ_OUTPUT_CHARS = 400000;
+const CONVERSATION_ID_RE = /^[A-Za-z0-9:_-]{3,100}$/;
+
+function optionalWholeNumber(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+  }
+  return value;
+}
+
+/** Runs a read-only miniclaw browser command and returns its structured result. */
+async function runBrowserRead(operation, command, commandArgs, config) {
+  const cliConfig = resolveCliConfig(config);
+  await assertConfiguredFiles(cliConfig);
+  const args = [
+    `--config=${cliConfig.configPath}`,
+    "--logfile=",
+    `--workspace-mode=${normalizeWorkspaceMode(config.workspaceMode)}`,
+    "--allow-live-browser",
+    command,
+    ...commandArgs,
+  ];
+  const result = await runRuntimeProcess(cliConfig.runtime, args, {
+    cwd: cliConfig.cwd,
+    timeoutMs: cliConfig.timeoutMs,
+    maxBufferChars: BROWSER_READ_OUTPUT_CHARS,
+    env: buildChildEnv(),
+    commandRunner: cliConfig.commandRunner,
+  });
+  const resultLine = String(result.stdout ?? "")
+    .split(/\r?\n/)
+    .find((line) => line.startsWith(BROWSER_READ_MARKER));
+  if (result.ok && resultLine) {
+    return {
+      ok: true,
+      operation,
+      ...JSON.parse(resultLine.slice(BROWSER_READ_MARKER.length)),
+    };
+  }
+  const redactions = buildRedactions({ ...config, ...cliConfig });
+  const rawText = [result.stderr, result.error?.message].filter(Boolean).join("\n");
+  const userAction = detectUserActionRequest(rawText);
+  return {
+    ok: false,
+    operation,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    needsUserAction: userAction.needsUserAction,
+    ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
+    stderr: sanitizeText(rawText, redactions, cliConfig.maxOutputChars),
+  };
+}
+
+export async function searchKleinanzeigenMarket(params = {}, config = {}) {
+  const query = typeof params.query === "string" ? params.query.trim() : "";
+  if (query.length < 2 || query.length > 100) {
+    throw new Error("query must be 2 to 100 characters");
+  }
+  const categoryId = optionalWholeNumber(params.categoryId, "categoryId", { min: 1 });
+  const minPrice = optionalWholeNumber(params.minPrice, "minPrice");
+  const maxPrice = optionalWholeNumber(params.maxPrice, "maxPrice");
+  if (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice) {
+    throw new Error("minPrice must not be greater than maxPrice");
+  }
+  const pages = optionalWholeNumber(params.pages, "pages", { min: 1, max: 3 });
+  const args = [`--query=${query}`];
+  if (categoryId !== undefined) args.push(`--category-id=${categoryId}`);
+  if (minPrice !== undefined) args.push(`--min-price=${minPrice}`);
+  if (maxPrice !== undefined) args.push(`--max-price=${maxPrice}`);
+  if (pages !== undefined) args.push(`--pages=${pages}`);
+  const result = await runBrowserRead("market_search", "market-search", args, config);
+  if (result.ok && params.includeCommercial === false && Array.isArray(result.listings)) {
+    result.listings = result.listings.filter((listing) => listing.commercial !== true);
+  }
+  return result;
+}
+
+export async function readKleinanzeigenMessages(params = {}, config = {}) {
+  const args = [];
+  if (params.conversationId !== undefined) {
+    if (typeof params.conversationId !== "string" || !CONVERSATION_ID_RE.test(params.conversationId)) {
+      throw new Error("conversationId must contain only letters, digits, ':', '_' or '-'");
+    }
+    args.push(`--conversation=${params.conversationId}`);
+  }
+  const limit = optionalWholeNumber(params.limit, "limit", { min: 1, max: 100 });
+  if (limit !== undefined) args.push(`--limit=${limit}`);
+  if (params.includeBuyerConversations === true) args.push("--include-buyer");
+  const result = await runBrowserRead("messages", "messages", args, config);
+  if (result.ok && result.status === "not_logged_in") {
+    return {
+      ...result,
+      ok: false,
+      needsUserAction: true,
+      userActionHint:
+        "The browser session is not logged in to Kleinanzeigen. Ask the user to log in " +
+        "in the browser, then try again.",
+    };
+  }
+  if (result.ok && result.status === "error") {
+    return { ...result, ok: false };
+  }
+  return result;
 }
 
 export async function runKleinanzeigenOperation(operation, params = {}, config = {}) {

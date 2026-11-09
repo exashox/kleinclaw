@@ -11,9 +11,11 @@ import {
   listKleinanzeigenImages,
   listKleinanzeigenAds,
   readKleinanzeigenAd,
+  readKleinanzeigenMessages,
   runKleinanzeigenOperation,
   sanitizeText,
   searchKleinanzeigenCategories,
+  searchKleinanzeigenMarket,
   setKleinanzeigenAdActive,
   setKleinanzeigenAdFields,
 } from "./cli.js";
@@ -574,6 +576,82 @@ function categoriesTool(config) {
   });
 }
 
+function marketSearchTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_market_search",
+    label: "Kleinanzeigen Market Search",
+    description:
+      "Search current Kleinanzeigen listings in the browser and return comparable offers " +
+      "with parsed prices and the price spread (min, quartiles, median, max). Read-only. " +
+      "Asking prices are not sale prices; judge from titles which listings really compare.",
+    parameters: objectSchema(
+      {
+        query: {
+          type: "string",
+          minLength: 2,
+          maxLength: 100,
+          description: "Search words like a buyer would type them, e.g. \"schreibtischlampe metall\".",
+        },
+        categoryId: {
+          type: "integer",
+          minimum: 1,
+          description: "Optional category ID from kleinanzeigen_categories to narrow the search.",
+        },
+        minPrice: { type: "integer", minimum: 0, description: "Optional minimum price in euros." },
+        maxPrice: { type: "integer", minimum: 0, description: "Optional maximum price in euros." },
+        pages: {
+          type: "integer",
+          minimum: 1,
+          maximum: 3,
+          description: "Result pages to read (25 listings each). Defaults to 1.",
+        },
+        includeCommercial: {
+          type: "boolean",
+          description: "Keep listings of commercial sellers. Defaults to true.",
+        },
+      },
+      ["query"],
+    ),
+    operation: "market_search",
+    handler: (toolConfig, params) => searchKleinanzeigenMarket(params, toolConfig),
+  });
+}
+
+function messagesTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_messages",
+    label: "Kleinanzeigen Messages",
+    description:
+      "Read the Kleinanzeigen message box in the browser. Without conversationId: list " +
+      "conversations about the account's own ads (ad ID, ad title, buyer, unread count, " +
+      "last activity). With conversationId: return that conversation's messages, oldest " +
+      "first, including price offers. Read-only; does not mark anything as read and " +
+      "cannot send replies.",
+    parameters: objectSchema({
+      conversationId: {
+        type: "string",
+        pattern: "^[A-Za-z0-9:_-]{3,100}$",
+        description: "Conversation ID from the list to read its messages.",
+      },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 100,
+        description:
+          "Conversations to list (default 20) or latest messages to return (default 30).",
+      },
+      includeBuyerConversations: {
+        type: "boolean",
+        description:
+          "Also list conversations where the account owner is the buyer. Defaults to " +
+          "false: those are private and not about the account's ads.",
+      },
+    }),
+    operation: "messages",
+    handler: (toolConfig, params) => readKleinanzeigenMessages(params, toolConfig),
+  });
+}
+
 function readAdTool(config) {
   return localTool(config, {
     name: "kleinanzeigen_read_ad",
@@ -801,6 +879,8 @@ export function createKleinanzeigenTools(config = {}) {
     listAdsTool(config),
     adSchemaTool(config),
     categoriesTool(config),
+    marketSearchTool(config),
+    messagesTool(config),
     readAdTool(config),
     imagesListTool(config),
     browserStatusTool(config),

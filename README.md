@@ -380,6 +380,31 @@ For scoped publish calls, KleinClaw checks the selected ad file before running
 miniclaw. If the selected ad is not `active: true`, the tool returns a preflight
 diagnostic instead of running a publish command that miniclaw would skip.
 
+### Market research and messages
+
+Two read-only tools use the logged-in browser without changing anything on the
+account. Each opens its own tab and closes it afterwards.
+
+`kleinanzeigen_market_search` searches current listings like a buyer would and
+returns comparable offers with parsed prices (`price`, `negotiable`,
+`giveaway`, `oldPriceText` for reduced prices, `commercial` sellers) and the
+price spread (`min`, `p25`, `median`, `p75`, `max`, `mean`). Narrow it with a
+`categoryId` from `kleinanzeigen_categories`, `minPrice`/`maxPrice`, and read up
+to three result pages. Asking prices are not sale prices; the agent should judge
+from the titles which listings really compare.
+
+```json
+{ "query": "schreibtischlampe metall", "categoryId": 80, "pages": 2 }
+```
+
+`kleinanzeigen_messages` reads the message box. Without `conversationId` it lists
+conversations about the account's own ads with ad ID, ad title, buyer name,
+unread count, and last activity; conversations where the account is the buyer
+are left out unless `includeBuyerConversations` is set. With `conversationId` it
+returns that conversation's messages oldest first, including price offers made
+via "Direkt kaufen". Reading does not mark anything as read, and the tool cannot
+send replies.
+
 ### Browser settings
 
 Use `kleinanzeigen_browser_status` before publishing when browser state matters.
@@ -480,6 +505,25 @@ Tool call JSON for another `kleinanzeigen_browser_check`:
   "profileMode": "workspace"
 }
 ```
+
+#### External browser
+
+With `--remote-debugging-port` in `browser.arguments`, miniclaw attaches to an
+already running browser instead of launching one, for example the KleinClaw
+Browser Home Assistant add-on in `homeassistant/kleinclaw_browser`:
+
+```yaml
+browser:
+  arguments:
+    - --remote-debugging-host=<add-on hostname>
+    - --remote-debugging-port=9223
+    - --remote-debugging-token=<token from the add-on options>
+```
+
+`--remote-debugging-host` accepts localhost, private IPv4 addresses, and local
+hostnames that resolve to one. `--remote-debugging-token` is read only by
+miniclaw and sent as `?token=` to a protected DevTools endpoint; status output
+shows it as `[redacted]`.
 
 ### Scoped operations
 

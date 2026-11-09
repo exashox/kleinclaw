@@ -14,6 +14,7 @@ export interface ChromeVersionProbeOptions {
     binaryPath: string | null;
     remoteHost: string;
     remotePort: number | null;
+    remoteToken?: string | null;
     remoteTimeout: number;
     binaryTimeout: number;
 }
@@ -30,18 +31,20 @@ export declare function normalizeBrowserName(browserName: string): string;
 export declare function detectChromeVersionFromBinary(binaryPath: string, { timeout }?: {
     timeout?: number;
 }): Promise<ChromeVersionInfo | null>;
-export declare function detectChromeVersionFromRemoteDebugging({ host, port, timeout, }?: {
+export declare function detectChromeVersionFromRemoteDebugging({ host, port, timeout, token, }?: {
     host?: string;
     port?: number;
     timeout?: number;
+    token?: string | null;
 }): Promise<ChromeVersionInfo | null>;
 export declare function validateChrome136Configuration(browserArguments: string[], userDataDir: string | null | undefined): [boolean, string];
 export declare function buildBrowserDiagnosticReport(config: Config): BrowserDiagnosticReport;
 export declare function chromeVersionProbeOptionsFromConfig(config: Config): ChromeVersionProbeOptions;
-export declare function getChromeVersionDiagnosticInfo({ binaryPath, remoteHost, remotePort, remoteTimeout, binaryTimeout, }?: {
+export declare function getChromeVersionDiagnosticInfo({ binaryPath, remoteHost, remotePort, remoteToken, remoteTimeout, binaryTimeout, }?: {
     binaryPath?: string | null;
     remoteHost?: string;
     remotePort?: number | null;
+    remoteToken?: string | null;
     remoteTimeout?: number;
     binaryTimeout?: number;
 }): Promise<Record<string, unknown>>;

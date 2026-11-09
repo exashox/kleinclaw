@@ -19,9 +19,11 @@ import {
   listKleinanzeigenAds,
   redactArgs,
   readKleinanzeigenAd,
+  readKleinanzeigenMessages,
   runKleinanzeigenOperation,
   runProcess,
   sanitizeText,
+  searchKleinanzeigenMarket,
   setKleinanzeigenAdActive,
 } from "../src/cli.js";
 import {
@@ -384,6 +386,7 @@ describe("browser config tools", () => {
         "  arguments:",
         "    - --remote-debugging-host=kleinclaw-browser",
         "    - --remote-debugging-port=9223",
+        "    - --remote-debugging-token=secret-devtools-token-123",
       ].join("\n"),
       "utf8",
     );
@@ -397,7 +400,12 @@ describe("browser config tools", () => {
     assert.equal(status.connection.mode, "connect");
     assert.equal(status.connection.remoteHost, "kleinclaw-browser");
     assert.equal(status.connection.remotePort, 9223);
+    assert.equal(status.connection.accessTokenConfigured, true);
     assert.match(status.connection.note, /already running browser/);
+    assert.ok(
+      status.browser.configured.arguments.includes("--remote-debugging-token=[redacted]"),
+    );
+    assert.doesNotMatch(JSON.stringify(status), /secret-devtools-token/);
   });
 
   it("updates only safe browser keys after confirmation", async () => {
@@ -1849,5 +1857,94 @@ describe("ad field changes", () => {
       ),
       /whole number/,
     );
+  });
+});
+
+describe("browser read tools", () => {
+  async function browserReadConfig(result, { code = 0, stderr = "" } = {}) {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-read-"));
+    const configPath = path.join(tmp, "config.yaml");
+    await fs.writeFile(configPath, "ad_files: []\n", "utf8");
+    const calls = [];
+    return {
+      calls,
+      config: {
+        configPath,
+        commandRunner: async (argv) => {
+          calls.push(argv);
+          return {
+            stdout: result === null ? "" : `progress line\nKLEINCLAW_RESULT ${JSON.stringify(result)}\n`,
+            stderr,
+            code,
+            signal: null,
+            termination: "exit",
+          };
+        },
+      },
+    };
+  }
+
+  it("runs market-search with validated options and returns the structured result", async () => {
+    const listings = [
+      { id: "1", title: "Schreibtischlampe Metall", price: 25, commercial: false },
+      { id: "2", title: "Lampe vom Händler", price: 40, commercial: true },
+    ];
+    const { calls, config } = await browserReadConfig({ query: "schreibtischlampe", listings, stats: { median: 32.5 } });
+
+    const result = await searchKleinanzeigenMarket(
+      { query: " schreibtischlampe ", categoryId: 80, maxPrice: 100, pages: 2, includeCommercial: false },
+      config,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.operation, "market_search");
+    assert.equal(result.stats.median, 32.5);
+    assert.deepEqual(result.listings.map((listing) => listing.id), ["1"]);
+    const args = calls[0].slice(2);
+    assert.ok(args.includes("--allow-live-browser"));
+    assert.deepEqual(args.slice(args.indexOf("market-search")), [
+      "market-search",
+      "--query=schreibtischlampe",
+      "--category-id=80",
+      "--max-price=100",
+      "--pages=2",
+    ]);
+
+    await assert.rejects(() => searchKleinanzeigenMarket({ query: "x" }, config), /2 to 100 characters/);
+    await assert.rejects(
+      () => searchKleinanzeigenMarket({ query: "lampe", minPrice: 50, maxPrice: 10 }, config),
+      /minPrice must not be greater/,
+    );
+    await assert.rejects(() => searchKleinanzeigenMarket({ query: "lampe", pages: 4 }, config), /pages must be/);
+  });
+
+  it("reads messages and reports a missing login as a user action", async () => {
+    const list = await browserReadConfig({ status: "ok", mode: "list", conversations: [{ id: "a:b:c", adId: "123" }] });
+    const ok = await readKleinanzeigenMessages({ limit: 5 }, list.config);
+    assert.equal(ok.ok, true);
+    assert.equal(ok.conversations[0].adId, "123");
+    assert.deepEqual(list.calls[0].slice(-2), ["messages", "--limit=5"]);
+
+    const one = await browserReadConfig({ status: "ok", mode: "conversation", messages: [] });
+    await readKleinanzeigenMessages({ conversationId: "5p123:456dfzm:7ptv8t9bk", includeBuyerConversations: true }, one.config);
+    assert.deepEqual(one.calls[0].slice(-3), ["messages", "--conversation=5p123:456dfzm:7ptv8t9bk", "--include-buyer"]);
+    await assert.rejects(
+      () => readKleinanzeigenMessages({ conversationId: "../etc" }, one.config),
+      /conversationId must contain only/,
+    );
+
+    const loggedOut = await browserReadConfig({ status: "not_logged_in" });
+    const needsLogin = await readKleinanzeigenMessages({}, loggedOut.config);
+    assert.equal(needsLogin.ok, false);
+    assert.equal(needsLogin.needsUserAction, true);
+    assert.match(needsLogin.userActionHint, /log in/);
+
+    const failed = await browserReadConfig(
+      null,
+      { code: 1, stderr: "messages failed: HTTP 401 for http://h:9223/json/version?token=[redacted]" },
+    );
+    const error = await readKleinanzeigenMessages({}, failed.config);
+    assert.equal(error.ok, false);
+    assert.equal(error.exitCode, 1);
   });
 });

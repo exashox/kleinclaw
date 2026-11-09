@@ -17,6 +17,8 @@ export interface BrowserSessionPlan {
     browserExecutablePath: string;
     remoteHost: string;
     remotePort: number | null;
+    /** Access token for a protected DevTools endpoint (connect mode only). */
+    remoteToken?: string | null;
     browserArgs: string[];
     userDataDir: string | null;
     profileDir: string | null;

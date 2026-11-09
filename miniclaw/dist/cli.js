@@ -6,6 +6,7 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runMarketSearch, runMessages } from "./cli/browser-reads.js";
 import { VERSION, usage } from "./cli/help.js";
 import { createDefaultConfig, runDiagnose, runUpdateCheck, updateContentHashes, verifyConfig, } from "./cli/local-commands.js";
 import { parseArgs, prepareCommand } from "./cli/parser.js";
@@ -43,6 +44,10 @@ export async function run(argv = process.argv, options = {}) {
             return updateContentHashes(parsed);
         case "diagnose":
             return runDiagnose(parsed);
+        case "market-search":
+            return runMarketSearch(parsed, workspace);
+        case "messages":
+            return runMessages(parsed, workspace);
         case "publish":
         case "update":
         case "delete":

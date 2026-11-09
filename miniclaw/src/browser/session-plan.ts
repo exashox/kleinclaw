@@ -13,6 +13,7 @@ import {
   isLoopbackDebuggingHost,
   remoteDebuggingHostFromArguments,
   remoteDebuggingPortFromArguments,
+  remoteDebuggingTokenFromArguments,
 } from "./browser-arguments.js";
 
 export const DEFAULT_BROWSER_ARGS = [
@@ -48,6 +49,8 @@ export interface BrowserSessionPlan {
   browserExecutablePath: string;
   remoteHost: string;
   remotePort: number | null;
+  /** Access token for a protected DevTools endpoint (connect mode only). */
+  remoteToken?: string | null;
   browserArgs: string[];
   userDataDir: string | null;
   profileDir: string | null;
@@ -270,6 +273,7 @@ export function buildBrowserSessionPlan(
   const binaryLocation = configuredBinaryLocation || getCompatibleBrowser({ homeDir });
   const remoteHost = remoteDebuggingHostFromArguments(browserConfig.arguments);
   const remotePort = remoteDebuggingPortFromArguments(browserConfig.arguments);
+  const remoteToken = remoteDebuggingTokenFromArguments(browserConfig.arguments);
   const environment: Record<string, string> = {};
   const extensionPaths = browserConfig.extensions.map((extensionPath) =>
     resolveConfiguredPath(extensionPath, cwd, homeDir)
@@ -281,6 +285,7 @@ export function buildBrowserSessionPlan(
       browserExecutablePath: binaryLocation,
       remoteHost,
       remotePort,
+      remoteToken,
       browserArgs: [],
       userDataDir: null,
       profileDir: null,
@@ -296,6 +301,12 @@ export function buildBrowserSessionPlan(
     throw new Error(
       `--remote-debugging-host=${remoteHost} requires --remote-debugging-port; ` +
         "browsers launched by miniclaw stay on localhost.",
+    );
+  }
+  if (remoteToken !== null) {
+    throw new Error(
+      "--remote-debugging-token requires --remote-debugging-port; " +
+        "it only protects an external browser that miniclaw attaches to.",
     );
   }
 

@@ -15,6 +15,22 @@ function readOptionValue(argv, index, option) {
     }
     return { value, nextIndex: index + 1 };
 }
+const READ_OPTIONS = [
+    ["--query", "query", "string"],
+    ["--category-id", "categoryId", "number"],
+    ["--min-price", "minPrice", "number"],
+    ["--max-price", "maxPrice", "number"],
+    ["--pages", "pages", "number"],
+    ["--conversation", "conversationId", "string"],
+    ["--limit", "limit", "number"],
+];
+function readNumberOption(name, value) {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) {
+        throw new Error(`${name} must be a non-negative whole number`);
+    }
+    return Number(trimmed);
+}
 export function parseArgs(argv) {
     const parsed = {
         command: "help",
@@ -102,6 +118,21 @@ export function parseArgs(argv) {
         if (arg.startsWith("--lang")) {
             const option = readOptionValue(argv, index, "--lang");
             parsed.lang = option.value;
+            index = option.nextIndex;
+            continue;
+        }
+        if (arg === "--include-buyer") {
+            parsed.read = { ...parsed.read, includeBuyerConversations: true };
+            continue;
+        }
+        const readOption = READ_OPTIONS.find(([name]) => arg === name || arg.startsWith(`${name}=`));
+        if (readOption) {
+            const [name, key, kind] = readOption;
+            const option = readOptionValue(argv, index, name);
+            parsed.read = {
+                ...parsed.read,
+                [key]: kind === "number" ? readNumberOption(name, option.value) : option.value,
+            };
             index = option.nextIndex;
             continue;
         }

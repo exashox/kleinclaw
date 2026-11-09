@@ -174,8 +174,11 @@ export async function createBrowserSession(
       throw new Error("Remote browser session plan is missing remotePort");
     }
     const remoteHost = await resolveRemoteDebuggingHost(plan.remoteHost);
+    const tokenQuery = plan.remoteToken
+      ? `?token=${encodeURIComponent(plan.remoteToken)}`
+      : "";
     browser = await driver.connectCdpBrowser(
-      `http://${remoteHost}:${plan.remotePort}`,
+      `http://${remoteHost}:${plan.remotePort}${tokenQuery}`,
       timeout === undefined ? undefined : { timeout: timeout * 1000 },
     );
     context = firstContext(browser);

@@ -23,6 +23,10 @@ Kleinanzeigen schnell Captchas und Sperren aus.
    aktivieren.
 3. Auf der Info-Seite des Add-ons steht sein **Hostname**, z.B.
    `a1b2c3d4-kleinclaw-browser`. Den brauchst du unten.
+4. Unter *Konfiguration* ein **DevTools-Token** (`cdp_token`) eintragen und
+   das Add-on neu starten. Ohne Token ist der CDP-Port gesperrt. Ein
+   zufälliges Token erzeugst du z.B. im Terminal mit
+   `openssl rand -hex 24` (16 bis 128 Zeichen aus `A-Z a-z 0-9 - _`).
 
 Updates erscheinen wie bei jedem anderen Add-on, sobald die Version in
 `config.yaml` im Repo erhöht wurde.
@@ -44,7 +48,12 @@ browser:
   arguments:
     - --remote-debugging-host=<hostname>
     - --remote-debugging-port=9223
+    - --remote-debugging-token=<token>
 ```
+
+`--remote-debugging-token` ist kein Chromium-Schalter, sondern wird nur von
+miniclaw gelesen und als `?token=` mitgeschickt. KleinClaw zeigt ihn nie im
+Klartext an.
 
 Mit `--remote-debugging-port` startet miniclaw keinen eigenen Browser mehr,
 sondern übernimmt den laufenden KleinClaw Browser. Am Ende schließt es nur die
@@ -61,7 +70,7 @@ Damit der Agent auch mit dem allgemeinen Browser-Tool von OpenClaw in diesem
 Browser arbeitet, im Terminal des OpenClaw-Add-ons:
 
 ```bash
-openclaw config set browser.profiles.kleinclaw '{"cdpUrl":"http://<hostname>:9223","attachOnly":true}' --strict-json --merge
+openclaw config set browser.profiles.kleinclaw '{"cdpUrl":"http://<hostname>:9223?token=<token>","attachOnly":true}' --strict-json --merge
 openclaw config set browser.ssrfPolicy.allowedHostnames '["<hostname>"]' --strict-json
 openclaw config set browser.defaultProfile kleinclaw
 openclaw browser --browser-profile kleinclaw start
@@ -77,15 +86,19 @@ IP von der Info-Seite eintragen; sie kann sich nach einem Neustart ändern.
 | ------------ | ---------------------------------------------------- | ----------------------------- |
 | `resolution` | `1600x900`                                           | Größe des virtuellen Displays |
 | `start_url`  | `https://www.kleinanzeigen.de/m-meine-anzeigen.html` | Seite beim Start              |
+| `cdp_token`  | leer (CDP gesperrt)                                  | Zugangstoken für Port 9223    |
 
 ## Hinweise
 
 - **Nicht gleichzeitig klicken.** Während der Agent arbeitet, nur zusehen.
   Eigene Klicks im selben Fenster bringen den Ablauf durcheinander.
 - **Sicherheit:** Port 9223 (CDP) wird nicht auf den Host gemappt und ist nur im
-  internen Add-on-Netz erreichbar. Wer CDP erreicht, kann den eingeloggten
-  Browser vollständig steuern. Installiere daher nur Add-ons, denen du vertraust.
-  Die noVNC-Oberfläche ist nur über HA-Ingress erreichbar, also mit HA-Login.
+  internen Add-on-Netz erreichbar. Wer CDP mit gültigem Token erreicht, kann
+  den eingeloggten Browser vollständig steuern; behandle das Token wie ein
+  Passwort. Abgewiesene Zugriffe stehen im Protokoll des Add-ons. Die
+  noVNC-Oberfläche nimmt nur Verbindungen vom HA-Ingress an, also mit HA-Login.
+- **Token ändern:** neues Token in den Optionen eintragen, Add-on neu starten,
+  danach miniclaw-`config.yaml` und die OpenClaw-`cdpUrl` anpassen.
 - Wenn Kleinanzeigen doch ein Captcha oder eine Gerätebestätigung zeigt,
   erledigst du sie im KleinClaw Browser. miniclaw meldet das als
   Captcha-Abbruch, danach den Lauf wiederholen.

@@ -460,6 +460,81 @@ describe("package install boundary", () => {
     assert.equal(await resolveRemoteDebuggingHost("localhost"), "localhost");
   });
 
+  it("sends a DevTools access token only to an attached browser and never echoes it", async () => {
+    const { buildBrowserSessionPlan } = await import("../miniclaw/dist/browser/session-plan.js");
+    const {
+      devtoolsEndpointUrl,
+      redactDevtoolsUrl,
+      remoteDebuggingTokenFromArguments,
+    } = await import("../miniclaw/dist/browser/browser-arguments.js");
+    const { Config } = await import("../miniclaw/dist/model/config-model.js");
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-remote-token-"));
+    const fakeBrowser = path.join(tmp, "chromium");
+    await fs.writeFile(fakeBrowser, "");
+    const token = "devtools_token-0123456789";
+
+    assert.equal(remoteDebuggingTokenFromArguments([]), null);
+    assert.equal(
+      remoteDebuggingTokenFromArguments([`--remote-debugging-token=${token}`]),
+      token,
+    );
+    for (const bad of ["short", "has space in it 12345", "with&ampersand-0123456"]) {
+      assert.throws(
+        () => remoteDebuggingTokenFromArguments([`--remote-debugging-token=${bad}`]),
+        (error) => /Invalid --remote-debugging-token value/.test(error.message) &&
+          !error.message.includes(bad),
+        bad,
+      );
+    }
+
+    const plan = buildBrowserSessionPlan(
+      new Config({
+        browser: {
+          arguments: [
+            "--remote-debugging-host=kleinclaw-browser",
+            "--remote-debugging-port=9223",
+            `--remote-debugging-token=${token}`,
+          ],
+          binary_location: fakeBrowser,
+        },
+      }),
+      { cwd: tmp },
+    );
+    assert.equal(plan.mode, "connect");
+    assert.equal(plan.remoteToken, token);
+
+    assert.throws(
+      () => buildBrowserSessionPlan(
+        new Config({
+          browser: {
+            arguments: [`--remote-debugging-token=${token}`],
+            binary_location: fakeBrowser,
+          },
+        }),
+        { cwd: tmp },
+      ),
+      /--remote-debugging-token requires --remote-debugging-port/,
+    );
+
+    const endpoint = `http://172.30.33.5:9223?token=${token}`;
+    assert.equal(
+      devtoolsEndpointUrl(endpoint, "/json/version"),
+      `http://172.30.33.5:9223/json/version?token=${token}`,
+    );
+    assert.equal(
+      devtoolsEndpointUrl(endpoint, "/json/new?about%3Ablank"),
+      `http://172.30.33.5:9223/json/new?about%3Ablank&token=${token}`,
+    );
+    assert.equal(
+      devtoolsEndpointUrl("http://127.0.0.1:9222", "/json/list"),
+      "http://127.0.0.1:9222/json/list",
+    );
+    assert.equal(
+      redactDevtoolsUrl(`HTTP 401 for http://h:9223/json/version?token=${token}`),
+      "HTTP 401 for http://h:9223/json/version?token=[redacted]",
+    );
+  });
+
   it("keeps the browser session planner on miniclaw CDP profile semantics", async () => {
     const {
       browserCandidatePaths,

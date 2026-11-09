@@ -56,6 +56,44 @@ export async function resolveRemoteDebuggingHost(host) {
     }
     return address;
 }
+const DEBUGGING_TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
+const DEBUGGING_TOKEN_FLAG = "--remote-debugging-token=";
+/**
+ * Access token for a protected DevTools endpoint (for example the KleinClaw
+ * Browser add-on proxy). It is sent as `?token=` because the WebSocket client
+ * cannot set headers. The value is never echoed in errors.
+ */
+export function remoteDebuggingTokenFromArguments(args) {
+    for (const arg of args) {
+        if (!arg.startsWith(DEBUGGING_TOKEN_FLAG)) {
+            continue;
+        }
+        const token = arg.slice(DEBUGGING_TOKEN_FLAG.length).trim().replace(/^["']|["']$/g, "");
+        if (!DEBUGGING_TOKEN_PATTERN.test(token)) {
+            throw new Error("Invalid --remote-debugging-token value: use 16 to 128 letters, digits, '-' or '_'.");
+        }
+        return token;
+    }
+    return null;
+}
+export function isRemoteDebuggingTokenArgument(arg) {
+    return arg.startsWith(DEBUGGING_TOKEN_FLAG);
+}
+/** Builds `<origin><path>` for a DevTools endpoint and keeps its access token. */
+export function devtoolsEndpointUrl(endpoint, pathAndQuery) {
+    const base = new URL(endpoint);
+    const token = base.searchParams.get("token");
+    const url = `${base.protocol}//${base.host}${pathAndQuery}`;
+    if (!token) {
+        return url;
+    }
+    const separator = pathAndQuery.includes("?") ? "&" : "?";
+    return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+/** Hides access tokens in URLs before they reach logs or error messages. */
+export function redactDevtoolsUrl(text) {
+    return text.replace(/([?&]token=)[^&#\s"']+/g, "$1[redacted]");
+}
 export function remoteDebuggingPortFromArguments(args) {
     for (const arg of args) {
         if (!arg.startsWith("--remote-debugging-port=")) {

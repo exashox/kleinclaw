@@ -215,8 +215,10 @@ describe("kleinanzeigen plugin tools", () => {
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_browser_configure"), true);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_draft_ad"), true);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_set_ad_active"), true);
-    assert.equal(tools.length, 18);
+    assert.equal(tools.length, 20);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_categories"), false);
+    assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_market_search"), false);
+    assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_messages"), false);
     assert.deepEqual(
       tools.filter((tool) => SIDE_EFFECT_TOOL_NAMES.has(tool.name)).map((tool) => tool.name),
       [

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { BrowserConfig } from "../model/config-model.js";
-import { isLoopbackDebuggingHost, remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, } from "./browser-arguments.js";
+import { isLoopbackDebuggingHost, remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, remoteDebuggingTokenFromArguments, } from "./browser-arguments.js";
 export const DEFAULT_BROWSER_ARGS = [
     "--disable-crash-reporter",
     "--disable-domain-reliability",
@@ -190,6 +190,7 @@ export function buildBrowserSessionPlan(configOrBrowserConfig, { defaultUserData
     const binaryLocation = configuredBinaryLocation || getCompatibleBrowser({ homeDir });
     const remoteHost = remoteDebuggingHostFromArguments(browserConfig.arguments);
     const remotePort = remoteDebuggingPortFromArguments(browserConfig.arguments);
+    const remoteToken = remoteDebuggingTokenFromArguments(browserConfig.arguments);
     const environment = {};
     const extensionPaths = browserConfig.extensions.map((extensionPath) => resolveConfiguredPath(extensionPath, cwd, homeDir));
     if (remotePort !== null) {
@@ -198,6 +199,7 @@ export function buildBrowserSessionPlan(configOrBrowserConfig, { defaultUserData
             browserExecutablePath: binaryLocation,
             remoteHost,
             remotePort,
+            remoteToken,
             browserArgs: [],
             userDataDir: null,
             profileDir: null,
@@ -211,6 +213,10 @@ export function buildBrowserSessionPlan(configOrBrowserConfig, { defaultUserData
     if (!isLoopbackDebuggingHost(remoteHost)) {
         throw new Error(`--remote-debugging-host=${remoteHost} requires --remote-debugging-port; ` +
             "browsers launched by miniclaw stay on localhost.");
+    }
+    if (remoteToken !== null) {
+        throw new Error("--remote-debugging-token requires --remote-debugging-port; " +
+            "it only protects an external browser that miniclaw attaches to.");
     }
     const browserArgs = [...DEFAULT_BROWSER_ARGS];
     const isEdge = binaryLocation.toLowerCase().includes("edge");

@@ -15,7 +15,11 @@ import {
   type WebLocator,
   type WebPage,
 } from "../web/types.js";
-import { isLoopbackDebuggingHost } from "./browser-arguments.js";
+import {
+  devtoolsEndpointUrl,
+  isLoopbackDebuggingHost,
+  redactDevtoolsUrl,
+} from "./browser-arguments.js";
 import { type BrowserSessionPlan } from "./session-plan.js";
 
 const UPLOAD_MIME_TYPES: Record<string, string> = {
@@ -117,7 +121,7 @@ async function fetchJson<T>(
   try {
     const response = await fetch(url, { method, signal: controller.signal });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status} for ${url}`);
+      throw new Error(`HTTP ${response.status} for ${redactDevtoolsUrl(url)}`);
     }
     return await response.json() as T;
   } finally {
@@ -147,22 +151,29 @@ async function waitForEndpoint(endpoint: string, timeoutMs: number): Promise<voi
   let lastError: unknown = null;
   do {
     try {
-      await fetchJson<Record<string, unknown>>(`${endpoint}/json/version`, {
+      await fetchJson<Record<string, unknown>>(devtoolsEndpointUrl(endpoint, "/json/version"), {
         timeoutMs: Math.min(1000, timeoutMs),
       });
       return;
     } catch (error) {
       lastError = error;
+      // Waiting does not fix a refused token; say so right away.
+      if (error instanceof Error && /^HTTP 40[13] /.test(error.message)) {
+        throw new Error(
+          `${error.message}: the DevTools endpoint refused access. ` +
+            "Check --remote-debugging-token against the token configured for that browser.",
+        );
+      }
       await sleep(POLL_MS);
     }
   } while (Date.now() < deadline);
   throw timeoutError(
-    `Browser process not reachable at ${endpoint}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    redactDevtoolsUrl(`Browser process not reachable at ${endpoint}: ${lastError instanceof Error ? lastError.message : String(lastError)}`),
   );
 }
 
 async function browserWebSocketUrl(endpoint: string, timeoutMs: number): Promise<string> {
-  const version = await fetchJson<Record<string, unknown>>(`${endpoint}/json/version`, {
+  const version = await fetchJson<Record<string, unknown>>(devtoolsEndpointUrl(endpoint, "/json/version"), {
     timeoutMs,
   });
   const url = version.webSocketDebuggerUrl;
@@ -173,12 +184,12 @@ async function browserWebSocketUrl(endpoint: string, timeoutMs: number): Promise
 }
 
 async function listTargets(endpoint: string, timeoutMs: number): Promise<JsonTarget[]> {
-  return await fetchJson<JsonTarget[]>(`${endpoint}/json/list`, { timeoutMs });
+  return await fetchJson<JsonTarget[]>(devtoolsEndpointUrl(endpoint, "/json/list"), { timeoutMs });
 }
 
 async function createTarget(endpoint: string, timeoutMs: number): Promise<JsonTarget> {
   return await fetchJson<JsonTarget>(
-    `${endpoint}/json/new?${encodeURIComponent("about:blank")}`,
+    devtoolsEndpointUrl(endpoint, `/json/new?${encodeURIComponent("about:blank")}`),
     { method: "PUT", timeoutMs },
   );
 }
@@ -413,7 +424,7 @@ export class CdpPage implements WebPage {
   async close(): Promise<void> {
     if (this.target.id) {
       try {
-        await fetchJson(`${this.endpoint}/json/close/${this.target.id}`, {
+        await fetchJson(devtoolsEndpointUrl(this.endpoint, `/json/close/${this.target.id}`), {
           timeoutMs: 2000,
         });
       } catch {

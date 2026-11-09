@@ -12,6 +12,7 @@ import {
   isLoopbackDebuggingHost,
   remoteDebuggingHostFromArguments,
   remoteDebuggingPortFromArguments,
+  remoteDebuggingTokenFromArguments,
   resolveRemoteDebuggingHost,
 } from "./browser-arguments.js";
 import { getCompatibleBrowser } from "./session-plan.js";
@@ -37,6 +38,7 @@ export interface ChromeVersionProbeOptions {
   binaryPath: string | null;
   remoteHost: string;
   remotePort: number | null;
+  remoteToken?: string | null;
   remoteTimeout: number;
   binaryTimeout: number;
 }
@@ -106,17 +108,20 @@ export async function detectChromeVersionFromRemoteDebugging(
     host = "127.0.0.1",
     port = 9222,
     timeout = 5,
+    token = null,
   }: {
     host?: string;
     port?: number;
     timeout?: number;
+    token?: string | null;
   } = {},
 ): Promise<ChromeVersionInfo | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout * 1000);
     const address = await resolveRemoteDebuggingHost(host);
-    const response = await fetch(`http://${address}:${port}/json/version`, {
+    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+    const response = await fetch(`http://${address}:${port}/json/version${tokenQuery}`, {
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -258,6 +263,20 @@ export function buildBrowserDiagnosticReport(config: Config): BrowserDiagnosticR
         `${remoteDebuggingHostFromArguments(browserConfig.arguments)}:${remoteDebuggingPort}; ` +
         "local binary and profile settings are not used.",
     });
+    try {
+      lines.push(remoteDebuggingTokenFromArguments(browserConfig.arguments)
+        ? { status: "ok", message: "Access token for the DevTools endpoint is configured." }
+        : {
+            status: "info",
+            message: "No --remote-debugging-token configured; protected endpoints " +
+              "such as the KleinClaw Browser add-on answer HTTP 401 without it.",
+          });
+    } catch (error) {
+      lines.push({
+        status: "fail",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   } else {
     const [chrome136Valid, chrome136Message] = validateChrome136Configuration(
       browserConfig.arguments,
@@ -310,21 +329,33 @@ export function chromeVersionProbeOptionsFromConfig(
     binaryPath: binaryPath || null,
     remoteHost: remoteDebuggingHostFromArguments(browserConfig.arguments),
     remotePort: remoteDebuggingPortFromArguments(browserConfig.arguments),
+    remoteToken: safeRemoteDebuggingToken(browserConfig.arguments),
     remoteTimeout: config.timeouts.effective("chromeRemoteDebugging"),
     binaryTimeout: config.timeouts.effective("chromeBinaryDetection"),
   };
+}
+
+function safeRemoteDebuggingToken(args: string[]): string | null {
+  try {
+    return remoteDebuggingTokenFromArguments(args);
+  } catch {
+    // Reported by the browser diagnostics; the version probe just goes without.
+    return null;
+  }
 }
 
 export async function getChromeVersionDiagnosticInfo({
   binaryPath,
   remoteHost = "127.0.0.1",
   remotePort,
+  remoteToken = null,
   remoteTimeout,
   binaryTimeout,
 }: {
   binaryPath?: string | null;
   remoteHost?: string;
   remotePort?: number | null;
+  remoteToken?: string | null;
   remoteTimeout?: number;
   binaryTimeout?: number;
 } = {}): Promise<Record<string, unknown>> {
@@ -356,6 +387,7 @@ export async function getChromeVersionDiagnosticInfo({
       host: remoteHost,
       port: remotePort,
       timeout: remoteTimeout,
+      token: remoteToken,
     });
     if (versionInfo) {
       diagnosticInfo.remote_detection = {

@@ -1,0 +1,13 @@
+configuration:
+  resolution:
+    name: Bildschirmauflösung
+    description: Größe des virtuellen Bildschirms, z.B. 1600x900.
+  start_url:
+    name: Startseite
+    description: Seite, die Chromium beim Start öffnet.
+  cdp_token:
+    name: DevTools-Token
+    description: >-
+      Zugangstoken für den DevTools-Port 9223 (16 bis 128 Zeichen aus
+      A-Z, a-z, 0-9, - und _). Ohne Token ist der Port gesperrt. Clients
+      hängen es als ?token=… an die Adresse an.

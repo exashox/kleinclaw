@@ -54,6 +54,8 @@ Commands:
   update-content-hash - recalculates each ad's content_hash
   create-config - creates a new default configuration file
   diagnose - diagnoses browser connection issues
+  market-search - reads comparable listings and their price spread (read-only)
+  messages - reads conversations of the message box (read-only)
   --
   help     - displays this help
   version  - displays the application version
@@ -64,6 +66,8 @@ Options:
   --keep-old
   --fill-only
   --allow-live-browser
+  --query=<TEXT> [--category-id=<ID>] [--min-price=<EUR>] [--max-price=<EUR>] [--pages=1-3]
+  --conversation=<ID> [--limit=<N>] [--include-buyer]
   --config=<PATH>
   --workspace-mode=portable|xdg
   --logfile=<PATH>

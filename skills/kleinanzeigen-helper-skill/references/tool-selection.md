@@ -8,6 +8,14 @@
   workflow exposed by KleinClaw.
 - `kleinanzeigen_categories`: search categories by keyword and return full
   display paths with IDs for an ad's `category`.
+- `kleinanzeigen_market_search`: search current Kleinanzeigen listings in the
+  browser and get comparable offers with parsed prices plus the price spread
+  (min, quartiles, median, max). Read-only. Use it for market value instead of
+  scraping search pages with the browser tool.
+- `kleinanzeigen_messages`: read the message box. Without `conversationId` it
+  lists conversations about the account's own ads (ad ID, title, buyer, unread
+  count); with `conversationId` it returns that conversation's messages and
+  price offers. Read-only: it marks nothing as read and cannot send replies.
 - `kleinanzeigen_read_ad`: read one existing ad config under configured
   `adRoots`, with contact fields redacted by default.
 - `kleinanzeigen_images_list`: list image files under one configured ad

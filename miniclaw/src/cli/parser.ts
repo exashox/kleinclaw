@@ -1,7 +1,11 @@
 import path from "node:path";
 
 import { isNumericIdSelector } from "../ad-selector.js";
-import { type CommandPreparation, type ParsedArgs } from "./types.js";
+import {
+  type CommandPreparation,
+  type ParsedArgs,
+  type ReadCommandOptions,
+} from "./types.js";
 
 function resolvePath(value: string): string {
   return path.resolve(value);
@@ -22,6 +26,24 @@ function readOptionValue(
     throw new Error(`${option} requires an argument`);
   }
   return { value, nextIndex: index + 1 };
+}
+
+const READ_OPTIONS: ReadonlyArray<readonly [string, keyof ReadCommandOptions, "string" | "number"]> = [
+  ["--query", "query", "string"],
+  ["--category-id", "categoryId", "number"],
+  ["--min-price", "minPrice", "number"],
+  ["--max-price", "maxPrice", "number"],
+  ["--pages", "pages", "number"],
+  ["--conversation", "conversationId", "string"],
+  ["--limit", "limit", "number"],
+];
+
+function readNumberOption(name: string, value: string): number {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`${name} must be a non-negative whole number`);
+  }
+  return Number(trimmed);
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -112,6 +134,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (arg.startsWith("--lang")) {
       const option = readOptionValue(argv, index, "--lang");
       parsed.lang = option.value;
+      index = option.nextIndex;
+      continue;
+    }
+    if (arg === "--include-buyer") {
+      parsed.read = { ...parsed.read, includeBuyerConversations: true };
+      continue;
+    }
+    const readOption = READ_OPTIONS.find(([name]) => arg === name || arg.startsWith(`${name}=`));
+    if (readOption) {
+      const [name, key, kind] = readOption;
+      const option = readOptionValue(argv, index, name);
+      parsed.read = {
+        ...parsed.read,
+        [key]: kind === "number" ? readNumberOption(name, option.value) : option.value,
+      };
       index = option.nextIndex;
       continue;
     }

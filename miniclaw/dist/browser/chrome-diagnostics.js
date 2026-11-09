@@ -6,7 +6,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { promisify } from "node:util";
-import { isLoopbackDebuggingHost, remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, resolveRemoteDebuggingHost, } from "./browser-arguments.js";
+import { isLoopbackDebuggingHost, remoteDebuggingHostFromArguments, remoteDebuggingPortFromArguments, remoteDebuggingTokenFromArguments, resolveRemoteDebuggingHost, } from "./browser-arguments.js";
 import { getCompatibleBrowser } from "./session-plan.js";
 const execFileAsync = promisify(execFile);
 export const CHROME_136_VERSION = 136;
@@ -57,12 +57,13 @@ export async function detectChromeVersionFromBinary(binaryPath, { timeout = 10 }
         return null;
     }
 }
-export async function detectChromeVersionFromRemoteDebugging({ host = "127.0.0.1", port = 9222, timeout = 5, } = {}) {
+export async function detectChromeVersionFromRemoteDebugging({ host = "127.0.0.1", port = 9222, timeout = 5, token = null, } = {}) {
     try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout * 1000);
         const address = await resolveRemoteDebuggingHost(host);
-        const response = await fetch(`http://${address}:${port}/json/version`, {
+        const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+        const response = await fetch(`http://${address}:${port}/json/version${tokenQuery}`, {
             signal: controller.signal,
         });
         clearTimeout(timer);
@@ -194,6 +195,21 @@ export function buildBrowserDiagnosticReport(config) {
                 `${remoteDebuggingHostFromArguments(browserConfig.arguments)}:${remoteDebuggingPort}; ` +
                 "local binary and profile settings are not used.",
         });
+        try {
+            lines.push(remoteDebuggingTokenFromArguments(browserConfig.arguments)
+                ? { status: "ok", message: "Access token for the DevTools endpoint is configured." }
+                : {
+                    status: "info",
+                    message: "No --remote-debugging-token configured; protected endpoints " +
+                        "such as the KleinClaw Browser add-on answer HTTP 401 without it.",
+                });
+        }
+        catch (error) {
+            lines.push({
+                status: "fail",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
     }
     else {
         const [chrome136Valid, chrome136Message] = validateChrome136Configuration(browserConfig.arguments, browserConfig.userDataDir);
@@ -238,11 +254,21 @@ export function chromeVersionProbeOptionsFromConfig(config) {
         binaryPath: binaryPath || null,
         remoteHost: remoteDebuggingHostFromArguments(browserConfig.arguments),
         remotePort: remoteDebuggingPortFromArguments(browserConfig.arguments),
+        remoteToken: safeRemoteDebuggingToken(browserConfig.arguments),
         remoteTimeout: config.timeouts.effective("chromeRemoteDebugging"),
         binaryTimeout: config.timeouts.effective("chromeBinaryDetection"),
     };
 }
-export async function getChromeVersionDiagnosticInfo({ binaryPath, remoteHost = "127.0.0.1", remotePort, remoteTimeout, binaryTimeout, } = {}) {
+function safeRemoteDebuggingToken(args) {
+    try {
+        return remoteDebuggingTokenFromArguments(args);
+    }
+    catch {
+        // Reported by the browser diagnostics; the version probe just goes without.
+        return null;
+    }
+}
+export async function getChromeVersionDiagnosticInfo({ binaryPath, remoteHost = "127.0.0.1", remotePort, remoteToken = null, remoteTimeout, binaryTimeout, } = {}) {
     const diagnosticInfo = {
         binary_detection: null,
         remote_detection: null,
@@ -269,6 +295,7 @@ export async function getChromeVersionDiagnosticInfo({ binaryPath, remoteHost = 
             host: remoteHost,
             port: remotePort,
             timeout: remoteTimeout,
+            token: remoteToken,
         });
         if (versionInfo) {
             diagnosticInfo.remote_detection = {

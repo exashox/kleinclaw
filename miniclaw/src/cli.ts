@@ -8,6 +8,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { runMarketSearch, runMessages } from "./cli/browser-reads.js";
 import { VERSION, usage } from "./cli/help.js";
 import {
   createDefaultConfig,
@@ -72,6 +73,10 @@ export async function run(
       return updateContentHashes(parsed);
     case "diagnose":
       return runDiagnose(parsed);
+    case "market-search":
+      return runMarketSearch(parsed, workspace);
+    case "messages":
+      return runMessages(parsed, workspace);
     case "publish":
     case "update":
     case "delete":

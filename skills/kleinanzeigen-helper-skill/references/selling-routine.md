@@ -18,9 +18,13 @@ to run listings, republication, reports, and buyer messages.
    `kleinanzeigen_images_list`.
 2. Research the item (model, specs, condition hints from the photos) with the
    tools available to you. Only state facts you can support.
-3. Estimate the market value from comparable Kleinanzeigen listings (open
-   searches with the browser tool) and, if useful, new prices elsewhere. Report
-   the range you found and the price you propose.
+3. Estimate the market value with `kleinanzeigen_market_search`: search the
+   way a buyer would (brand and model first, then broader words), narrow with
+   `categoryId` when results drift. Asking prices are not sale prices, and the
+   spread only counts listings that really compare: read the titles, drop
+   accessories, defects and bundles, and say how many comparable offers you
+   found. Add new prices from elsewhere if useful. Report the range and the
+   price you propose, with the reasoning.
 4. Pick the category with `kleinanzeigen_categories` (see Ad Authoring).
 5. Draft with `kleinanzeigen_draft_ad` and `active: false`, run scoped
    `kleinanzeigen_verify`, and send the user a summary (title, description,
@@ -71,11 +75,17 @@ to run listings, republication, reports, and buyer messages.
 
 ### Buyer messages
 
-- Read messages in the browser ("Nachrichten"). Only handle conversations about
-  ads that exist as local ad folders (match by ad ID or exact title). Ignore all
-  other conversations; the account may also be used privately.
+- Read messages with `kleinanzeigen_messages`: first the list, then each
+  conversation with unread messages by its `conversationId`. It lists only
+  conversations where the account sells. Only handle conversations whose
+  `adId` matches the `id` of a local ad folder (`kleinanzeigen_list_ads`);
+  ignore all others, the account may also be used privately.
+- Messages with `direction: system` and an `offer` are price offers made via
+  "Direkt kaufen"; report the offered price to the user, never accept or
+  decline on your own.
 - Draft replies from the facts in that item's folder only. Do not promise
   anything the listing does not say (price, shipping, condition, availability).
-- Send replies only when the user has allowed automatic replies. When unsure,
-  ask the user and include the draft.
+- KleinClaw does not send replies. Give the user each draft with the buyer's
+  name, the ad title and the conversation ID so they can send it. Send replies
+  yourself only when the user has explicitly allowed automatic replies.
 - If a buyer confirms a purchase or the user says an item is sold, mark it sold.

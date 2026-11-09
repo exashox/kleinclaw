@@ -18,8 +18,8 @@ RUN apt-get update \
 RUN cp -r /usr/share/novnc /opt/novnc && rm -f /opt/novnc/index.html
 COPY novnc-index.html /opt/novnc/index.html
 COPY run.sh /run.sh
-COPY cdp_proxy.py /cdp_proxy.py
+COPY cdp_proxy.py ingress_guard.py /
 # Guard against CRLF when the folder is copied from a Windows checkout.
-RUN sed -i 's/\r$//' /run.sh /cdp_proxy.py && chmod a+x /run.sh
+RUN sed -i 's/\r$//' /run.sh /cdp_proxy.py /ingress_guard.py && chmod a+x /run.sh
 
 CMD ["/run.sh"]

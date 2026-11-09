@@ -26,6 +26,8 @@ export type Command =
   | "update-content-hash"
   | "create-config"
   | "diagnose"
+  | "market-search"
+  | "messages"
   | "help"
   | "version";
 
@@ -45,6 +47,19 @@ export interface ParsedArgs {
   allowLiveBrowser: boolean;
   verbose: boolean;
   lang: string | null;
+  /** Options of the read-only browser commands (market-search, messages). */
+  read?: ReadCommandOptions;
+}
+
+export interface ReadCommandOptions {
+  query?: string;
+  categoryId?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  pages?: number;
+  conversationId?: string;
+  limit?: number;
+  includeBuyerConversations?: boolean;
 }
 
 export interface CommandPreparation {

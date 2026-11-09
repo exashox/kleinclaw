@@ -8,7 +8,7 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { TimeoutError } from "../web/errors.js";
-import { isLoopbackDebuggingHost } from "./browser-arguments.js";
+import { devtoolsEndpointUrl, isLoopbackDebuggingHost, redactDevtoolsUrl, } from "./browser-arguments.js";
 const UPLOAD_MIME_TYPES = {
     ".gif": "image/gif",
     ".heic": "image/heic",
@@ -47,7 +47,7 @@ async function fetchJson(url, { method = "GET", timeoutMs = 5000, } = {}) {
     try {
         const response = await fetch(url, { method, signal: controller.signal });
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status} for ${url}`);
+            throw new Error(`HTTP ${response.status} for ${redactDevtoolsUrl(url)}`);
         }
         return await response.json();
     }
@@ -77,20 +77,25 @@ async function waitForEndpoint(endpoint, timeoutMs) {
     let lastError = null;
     do {
         try {
-            await fetchJson(`${endpoint}/json/version`, {
+            await fetchJson(devtoolsEndpointUrl(endpoint, "/json/version"), {
                 timeoutMs: Math.min(1000, timeoutMs),
             });
             return;
         }
         catch (error) {
             lastError = error;
+            // Waiting does not fix a refused token; say so right away.
+            if (error instanceof Error && /^HTTP 40[13] /.test(error.message)) {
+                throw new Error(`${error.message}: the DevTools endpoint refused access. ` +
+                    "Check --remote-debugging-token against the token configured for that browser.");
+            }
             await sleep(POLL_MS);
         }
     } while (Date.now() < deadline);
-    throw timeoutError(`Browser process not reachable at ${endpoint}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+    throw timeoutError(redactDevtoolsUrl(`Browser process not reachable at ${endpoint}: ${lastError instanceof Error ? lastError.message : String(lastError)}`));
 }
 async function browserWebSocketUrl(endpoint, timeoutMs) {
-    const version = await fetchJson(`${endpoint}/json/version`, {
+    const version = await fetchJson(devtoolsEndpointUrl(endpoint, "/json/version"), {
         timeoutMs,
     });
     const url = version.webSocketDebuggerUrl;
@@ -100,10 +105,10 @@ async function browserWebSocketUrl(endpoint, timeoutMs) {
     return url;
 }
 async function listTargets(endpoint, timeoutMs) {
-    return await fetchJson(`${endpoint}/json/list`, { timeoutMs });
+    return await fetchJson(devtoolsEndpointUrl(endpoint, "/json/list"), { timeoutMs });
 }
 async function createTarget(endpoint, timeoutMs) {
-    return await fetchJson(`${endpoint}/json/new?${encodeURIComponent("about:blank")}`, { method: "PUT", timeoutMs });
+    return await fetchJson(devtoolsEndpointUrl(endpoint, `/json/new?${encodeURIComponent("about:blank")}`), { method: "PUT", timeoutMs });
 }
 function parseSelector(selector) {
     if (selector.startsWith("text=")) {
@@ -315,7 +320,7 @@ export class CdpPage {
     async close() {
         if (this.target.id) {
             try {
-                await fetchJson(`${this.endpoint}/json/close/${this.target.id}`, {
+                await fetchJson(devtoolsEndpointUrl(this.endpoint, `/json/close/${this.target.id}`), {
                     timeoutMs: 2000,
                 });
             }

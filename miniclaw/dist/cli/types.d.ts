@@ -3,7 +3,7 @@ import { type ExtendAdHook } from "../extend-orchestration.js";
 import { type Config } from "../model/config-model.js";
 import { type CapturePublishError, type DeleteAdHook, type PublishedAdState, type PublishingResultHook, type PublishAdAttempt, type SleepHook } from "../publish-orchestration.js";
 import { type LoadedAd } from "../selection.js";
-export type Command = "publish" | "verify" | "delete" | "update" | "download" | "extend" | "update-check" | "update-content-hash" | "create-config" | "diagnose" | "help" | "version";
+export type Command = "publish" | "verify" | "delete" | "update" | "download" | "extend" | "update-check" | "update-content-hash" | "create-config" | "diagnose" | "market-search" | "messages" | "help" | "version";
 export interface ParsedArgs {
     command: Command | string;
     adsSelector: string;
@@ -20,6 +20,18 @@ export interface ParsedArgs {
     allowLiveBrowser: boolean;
     verbose: boolean;
     lang: string | null;
+    /** Options of the read-only browser commands (market-search, messages). */
+    read?: ReadCommandOptions;
+}
+export interface ReadCommandOptions {
+    query?: string;
+    categoryId?: number;
+    minPrice?: number;
+    maxPrice?: number;
+    pages?: number;
+    conversationId?: string;
+    limit?: number;
+    includeBuyerConversations?: boolean;
 }
 export interface CommandPreparation {
     command: Command | string;
