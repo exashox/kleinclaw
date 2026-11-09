@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - 2026-11-09
+
+- add `kleinanzeigen_market_search`: reads current listings for a query
+  (optionally by category, price range, up to three pages) in the browser and
+  returns parsed prices with the price spread (min, quartiles, median, max)
+- add `kleinanzeigen_messages`: lists conversations about the account's own
+  ads and reads single conversations including price offers; read-only, leaves
+  buyer-side conversations out unless asked
+- add `--remote-debugging-token` for protected DevTools endpoints; miniclaw
+  sends it as `?token=`, never prints it, and stops at once on HTTP 401/403
+- KleinClaw Browser add-on 0.4.0: the DevTools port 9223 requires the new
+  `cdp_token` option (locked while it is empty), and noVNC accepts only Home
+  Assistant ingress connections
+
 ## 0.3.0 - 2026-11-09
 
 - add the **KleinClaw Browser** Home Assistant add-on (visible Chromium with

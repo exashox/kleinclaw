@@ -2,7 +2,7 @@
   "id": "kleinclaw",
   "name": "KleinClaw",
   "description": "Kleinanzeigen tools that can change live listings, edit local browser settings, and run the embedded miniclaw browser runtime with redacted output.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "activation": {
     "onStartup": true
   },
@@ -15,6 +15,8 @@
       "kleinanzeigen_list_ads",
       "kleinanzeigen_ad_schema",
       "kleinanzeigen_categories",
+      "kleinanzeigen_market_search",
+      "kleinanzeigen_messages",
       "kleinanzeigen_read_ad",
       "kleinanzeigen_images_list",
       "kleinanzeigen_browser_status",
