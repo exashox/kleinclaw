@@ -17,5 +17,12 @@ jobs:
         env:
           GH_MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
         run: |
+          case "${GITHUB_REF}" in
+            refs/tags/*)
+              # actions/checkout can store an annotated tag as a lightweight one;
+              # fetch the real tag object so GitHub gets the same tag as Gitea.
+              git fetch --force origin "+${GITHUB_REF}:${GITHUB_REF}"
+              ;;
+          esac
           git push "https://x-access-token:${GH_MIRROR_TOKEN}@github.com/exashox/kleinclaw.git" \
             "${GITHUB_REF}:${GITHUB_REF}"
