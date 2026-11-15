@@ -36,6 +36,9 @@ const READ_OPTIONS: ReadonlyArray<readonly [string, keyof ReadCommandOptions, "s
   ["--pages", "pages", "number"],
   ["--conversation", "conversationId", "string"],
   ["--limit", "limit", "number"],
+  ["--text", "text", "string"],
+  ["--after", "afterMessageId", "string"],
+  ["--ad-id", "adId", "string"],
 ];
 
 function readNumberOption(name: string, value: string): number {
@@ -139,6 +142,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--include-buyer") {
       parsed.read = { ...parsed.read, includeBuyerConversations: true };
+      continue;
+    }
+    if (arg === "--mark-read") {
+      parsed.read = { ...parsed.read, markRead: true };
       continue;
     }
     const readOption = READ_OPTIONS.find(([name]) => arg === name || arg.startsWith(`${name}=`));

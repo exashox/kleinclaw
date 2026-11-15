@@ -6,7 +6,7 @@ import path from "node:path";
 import { createBrowserSession } from "../browser-session.js";
 import { loadConfigFile } from "../io.js";
 import { buildMarketSearchUrl, MARKET_SEARCH_EXTRACT_JS, summarizeMarketPrices, toMarketListings, } from "../market-research.js";
-import { MESSAGEBOX_READ_JS, normalizeMessageboxRequest, } from "../messagebox.js";
+import { MESSAGEBOX_JS, normalizeMessageboxRequest, normalizeMessageboxSendRequest, } from "../messagebox.js";
 import { errorMessage } from "../value-guards.js";
 /** Machine-readable result line on stdout; everything else goes to stderr. */
 export const RESULT_MARKER = "KLEINCLAW_RESULT ";
@@ -116,9 +116,38 @@ export async function runMessages(parsed, workspace, openSession = openLiveReadS
             timeout: PAGE_TIMEOUT_MS,
             waitUntil: "domcontentloaded",
         });
-        if (!/^https:\/\/(www\.)?kleinanzeigen\.de\//.test(page.url)) {
+        if (!KLEINANZEIGEN_PAGE.test(page.url)) {
             return { status: "not_logged_in" };
         }
-        return await page.evaluate(MESSAGEBOX_READ_JS, request);
+        return await page.evaluate(MESSAGEBOX_JS, request);
+    });
+}
+const KLEINANZEIGEN_PAGE = /^https:\/\/(www\.)?kleinanzeigen\.de\//;
+/** Sends one reply after re-checking the conversation in the page. */
+export async function runSendMessage(parsed, workspace, openSession = openLiveReadSession) {
+    let request;
+    try {
+        request = normalizeMessageboxSendRequest({
+            conversationId: parsed.read?.conversationId ?? "",
+            text: parsed.read?.text ?? "",
+            afterMessageId: parsed.read?.afterMessageId ?? "",
+            expectedAdId: parsed.read?.adId ?? "",
+            minPrice: parsed.read?.minPrice ?? null,
+            markRead: parsed.read?.markRead === true,
+        });
+    }
+    catch (error) {
+        console.error(errorMessage(error));
+        return 2;
+    }
+    return await withReadSession(parsed, workspace, openSession, async (page) => {
+        await page.goto(`${ROOT_URL}/m-nachrichten.html`, {
+            timeout: PAGE_TIMEOUT_MS,
+            waitUntil: "domcontentloaded",
+        });
+        if (!KLEINANZEIGEN_PAGE.test(page.url)) {
+            return { status: "not_logged_in" };
+        }
+        return await page.evaluate(MESSAGEBOX_JS, request);
     });
 }

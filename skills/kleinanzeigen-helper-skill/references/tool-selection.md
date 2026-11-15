@@ -15,13 +15,20 @@
 - `kleinanzeigen_messages`: read the message box. Without `conversationId` it
   lists conversations about the account's own ads (ad ID, title, buyer, unread
   count); with `conversationId` it returns that conversation's messages and
-  price offers. Read-only: it marks nothing as read and cannot send replies.
+  price offers, plus `newestMessageId`, `awaitingReply`, `latestOffer`, and for
+  local ads `localAd` and `offerAssessment`. Conversations about local ads are
+  marked `managed: true`. Read-only: it marks nothing as read.
+- `kleinanzeigen_send_message`: send one reply in a managed conversation after
+  confirmation. Needs `afterMessageId` (= `newestMessageId`) and refuses when the
+  buyer wrote something newer, when it is the buyer's turn, or when the text
+  names a price below the ad's `minPrice` (asking price if none is set).
 - `kleinanzeigen_read_ad`: read one existing ad config under configured
   `adRoots`, with contact fields redacted by default.
 - `kleinanzeigen_images_list`: list image files under one configured ad
   directory and return relative globs usable in an ad draft.
 - `kleinanzeigen_set_ad_fields`: change `price` or `priceType` of one ad, or
-  mark it `sold` (also sets `active: false` and `sold_on`).
+  mark it `sold` (also sets `active: false` and `sold_on`). `minPrice` and
+  `negotiationNotes` store the user's negotiation limits next to the ad.
 - `kleinanzeigen_browser_status`: inspect sanitized effective browser settings
   and detected local browsers.
 - `kleinanzeigen_browser_check`: test current or proposed browser settings

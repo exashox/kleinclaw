@@ -23,6 +23,9 @@ const READ_OPTIONS = [
     ["--pages", "pages", "number"],
     ["--conversation", "conversationId", "string"],
     ["--limit", "limit", "number"],
+    ["--text", "text", "string"],
+    ["--after", "afterMessageId", "string"],
+    ["--ad-id", "adId", "string"],
 ];
 function readNumberOption(name, value) {
     const trimmed = value.trim();
@@ -123,6 +126,10 @@ export function parseArgs(argv) {
         }
         if (arg === "--include-buyer") {
             parsed.read = { ...parsed.read, includeBuyerConversations: true };
+            continue;
+        }
+        if (arg === "--mark-read") {
+            parsed.read = { ...parsed.read, markRead: true };
             continue;
         }
         const readOption = READ_OPTIONS.find(([name]) => arg === name || arg.startsWith(`${name}=`));

@@ -75,17 +75,14 @@ to run listings, republication, reports, and buyer messages.
 
 ### Buyer messages
 
-- Read messages with `kleinanzeigen_messages`: first the list, then each
-  conversation with unread messages by its `conversationId`. It lists only
-  conversations where the account sells. Only handle conversations whose
-  `adId` matches the `id` of a local ad folder (`kleinanzeigen_list_ads`);
-  ignore all others, the account may also be used privately.
-- Messages with `direction: system` and an `offer` are price offers made via
-  "Direkt kaufen"; report the offered price to the user, never accept or
-  decline on your own.
-- Draft replies from the facts in that item's folder only. Do not promise
-  anything the listing does not say (price, shipping, condition, availability).
-- KleinClaw does not send replies. Give the user each draft with the buyer's
-  name, the ad title and the conversation ID so they can send it. Send replies
-  yourself only when the user has explicitly allowed automatic replies.
-- If a buyer confirms a purchase or the user says an item is sold, mark it sold.
+- Follow [Buyer Conversations and Negotiation](negotiation.md) for reading,
+  judging offers, countering, and sending replies.
+- Only conversations marked `managed: true` by `kleinanzeigen_messages` are
+  yours: their `adId` belongs to a local ad. Ignore all others; the account may
+  also be used privately.
+- When an ad goes online, ask the user for the minimum price and store it with
+  `kleinanzeigen_set_ad_fields` `minPrice`.
+- Send replies yourself only when the user has allowed automatic replies;
+  otherwise give the user each draft with the buyer's name, the ad title and
+  the conversation ID.
+- If the user confirms pickup or payment, mark the item sold.

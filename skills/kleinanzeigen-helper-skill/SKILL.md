@@ -33,3 +33,5 @@ explicit user confirmation before running them.
 - Read [Selling Routine](references/selling-routine.md) when you run listings
   for the user over time: drafting from photos, republication, sold items,
   weekly reports, price proposals, and buyer messages.
+- Read [Buyer Conversations and Negotiation](references/negotiation.md) before
+  answering buyers, judging price offers, or sending a message.

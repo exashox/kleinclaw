@@ -402,8 +402,26 @@ conversations about the account's own ads with ad ID, ad title, buyer name,
 unread count, and last activity; conversations where the account is the buyer
 are left out unless `includeBuyerConversations` is set. With `conversationId` it
 returns that conversation's messages oldest first, including price offers made
-via "Direkt kaufen". Reading does not mark anything as read, and the tool cannot
-send replies.
+via "Direkt kaufen", plus `newestMessageId`, `awaitingReply`, and `latestOffer`.
+Reading does not mark anything as read. With `adRoots` configured,
+conversations about local ads are marked `managed: true`, and a single
+conversation also gets `localAd` (price, minimum price, days online) and an
+`offerAssessment` of the latest offer.
+
+`kleinanzeigen_send_message` sends one reply in a managed conversation after
+confirmation. Right before sending it reads the conversation again and refuses
+when the buyer wrote something newer than `afterMessageId`, when the last
+message is already the seller's, when the conversation is about another ad, or
+when the text names a price below the ad's minimum price that the buyer did not
+name first. Without a minimum price, the asking price is the floor. Replies with
+phone numbers, email addresses, links, or account numbers are refused. Accepting
+or declining "Direkt kaufen" offers is not supported; that stays with the
+account owner.
+
+The minimum price and negotiation instructions are set per ad with
+`kleinanzeigen_set_ad_fields` (`minPrice`, `clearMinPrice`,
+`negotiationNotes`). They are stored in `.negotiation.json` next to the ad
+file, so they never change the ad itself and are never published.
 
 ### Browser settings
 

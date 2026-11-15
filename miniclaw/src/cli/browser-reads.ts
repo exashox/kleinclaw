@@ -15,9 +15,11 @@ import {
   type MarketSearchPageResult,
 } from "../market-research.js";
 import {
-  MESSAGEBOX_READ_JS,
+  MESSAGEBOX_JS,
   normalizeMessageboxRequest,
+  normalizeMessageboxSendRequest,
   type MessageboxResult,
+  type MessageboxSendResult,
 } from "../messagebox.js";
 import { errorMessage } from "../value-guards.js";
 import { type Workspace } from "../workspace.js";
@@ -160,9 +162,43 @@ export async function runMessages(
       timeout: PAGE_TIMEOUT_MS,
       waitUntil: "domcontentloaded",
     });
-    if (!/^https:\/\/(www\.)?kleinanzeigen\.de\//.test(page.url)) {
+    if (!KLEINANZEIGEN_PAGE.test(page.url)) {
       return { status: "not_logged_in" } satisfies MessageboxResult;
     }
-    return await page.evaluate(MESSAGEBOX_READ_JS, request) as MessageboxResult;
+    return await page.evaluate(MESSAGEBOX_JS, request) as MessageboxResult;
+  });
+}
+
+const KLEINANZEIGEN_PAGE = /^https:\/\/(www\.)?kleinanzeigen\.de\//;
+
+/** Sends one reply after re-checking the conversation in the page. */
+export async function runSendMessage(
+  parsed: ParsedArgs,
+  workspace: Workspace | null,
+  openSession: OpenReadSession = openLiveReadSession,
+): Promise<number> {
+  let request;
+  try {
+    request = normalizeMessageboxSendRequest({
+      conversationId: parsed.read?.conversationId ?? "",
+      text: parsed.read?.text ?? "",
+      afterMessageId: parsed.read?.afterMessageId ?? "",
+      expectedAdId: parsed.read?.adId ?? "",
+      minPrice: parsed.read?.minPrice ?? null,
+      markRead: parsed.read?.markRead === true,
+    });
+  } catch (error) {
+    console.error(errorMessage(error));
+    return 2;
+  }
+  return await withReadSession(parsed, workspace, openSession, async (page) => {
+    await page.goto(`${ROOT_URL}/m-nachrichten.html`, {
+      timeout: PAGE_TIMEOUT_MS,
+      waitUntil: "domcontentloaded",
+    });
+    if (!KLEINANZEIGEN_PAGE.test(page.url)) {
+      return { status: "not_logged_in" } satisfies MessageboxSendResult;
+    }
+    return await page.evaluate(MESSAGEBOX_JS, request) as MessageboxSendResult;
   });
 }

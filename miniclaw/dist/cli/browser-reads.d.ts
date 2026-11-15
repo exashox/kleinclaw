@@ -16,4 +16,6 @@ export type OpenReadSession = (parsed: ParsedArgs, workspace: Workspace | null) 
 }>;
 export declare function runMarketSearch(parsed: ParsedArgs, workspace: Workspace | null, openSession?: OpenReadSession): Promise<number>;
 export declare function runMessages(parsed: ParsedArgs, workspace: Workspace | null, openSession?: OpenReadSession): Promise<number>;
+/** Sends one reply after re-checking the conversation in the page. */
+export declare function runSendMessage(parsed: ParsedArgs, workspace: Workspace | null, openSession?: OpenReadSession): Promise<number>;
 export {};

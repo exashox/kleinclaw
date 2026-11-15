@@ -28,6 +28,7 @@ export type Command =
   | "diagnose"
   | "market-search"
   | "messages"
+  | "send-message"
   | "help"
   | "version";
 
@@ -60,6 +61,11 @@ export interface ReadCommandOptions {
   conversationId?: string;
   limit?: number;
   includeBuyerConversations?: boolean;
+  /** send-message: reply text, newest answered message, ad of the conversation. */
+  text?: string;
+  afterMessageId?: string;
+  adId?: string;
+  markRead?: boolean;
 }
 
 export interface CommandPreparation {

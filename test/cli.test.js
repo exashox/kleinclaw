@@ -24,7 +24,9 @@ import {
   runProcess,
   sanitizeText,
   searchKleinanzeigenMarket,
+  sendKleinanzeigenMessage,
   setKleinanzeigenAdActive,
+  setKleinanzeigenAdFields,
 } from "../src/cli.js";
 import {
   createNodeCommandRunner,
@@ -1946,5 +1948,173 @@ describe("browser read tools", () => {
     const error = await readKleinanzeigenMessages({}, failed.config);
     assert.equal(error.ok, false);
     assert.equal(error.exitCode, 1);
+  });
+});
+
+describe("negotiation and replies", () => {
+  async function workspaceWithAd({ price = "100", priceType = "NEGOTIABLE" } = {}) {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-reply-"));
+    const configPath = path.join(tmp, "config.yaml");
+    await fs.writeFile(configPath, "ad_files:\n  - ads/**/ad.yaml\n", "utf8");
+    const adDir = path.join(tmp, "ads", "schreibtischlampe");
+    await fs.mkdir(adDir, { recursive: true });
+    await fs.writeFile(
+      path.join(adDir, "ad.yaml"),
+      [
+        "active: true",
+        "id: 3210987654",
+        "title: Schreibtischlampe Metall",
+        `price: ${price}`,
+        `price_type: ${priceType}`,
+        "created_on: '2026-11-01T10:00:00+00:00'",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const calls = [];
+    let nextResult = { status: "sent", conversationId: "c1:2:3", adId: "3210987654", markedRead: true };
+    const config = {
+      configPath,
+      adRoots: [path.join(tmp, "ads")],
+      commandRunner: async (argv) => {
+        calls.push(argv);
+        return {
+          stdout: `KLEINCLAW_RESULT ${JSON.stringify(nextResult)}\n`,
+          stderr: "",
+          code: 0,
+          signal: null,
+          termination: "exit",
+        };
+      },
+    };
+    return {
+      adDir,
+      calls,
+      config,
+      setResult(result) {
+        nextResult = result;
+      },
+    };
+  }
+
+  const reply = (overrides = {}) => ({
+    confirm: true,
+    conversationId: "c1:2:3",
+    adId: "3210987654",
+    afterMessageId: "m2",
+    text: "Hallo Erika, für 90 € gehört sie Ihnen.",
+    ...overrides,
+  });
+
+  it("stores negotiation limits next to the ad without touching the ad file", async () => {
+    const { adDir, config } = await workspaceWithAd();
+    const before = await fs.readFile(path.join(adDir, "ad.yaml"), "utf8");
+
+    const result = await setKleinanzeigenAdFields(
+      { confirm: true, adDirectories: [adDir], minPrice: 80, negotiationNotes: "nur Abholung" },
+      config,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.negotiation, { minPrice: 80, notes: "nur Abholung" });
+    assert.equal(await fs.readFile(path.join(adDir, "ad.yaml"), "utf8"), before);
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(path.join(adDir, ".negotiation.json"), "utf8")),
+      { minPrice: 80, notes: "nur Abholung" },
+    );
+    const listed = await listKleinanzeigenAds(config);
+    assert.deepEqual(listed.ads[0].negotiation, { minPrice: 80, notes: "nur Abholung" });
+
+    await assert.rejects(
+      () => setKleinanzeigenAdFields({ confirm: true, adDirectories: [adDir], minPrice: 150 }, config),
+      /must not be higher than the ad's price/,
+    );
+    await setKleinanzeigenAdFields(
+      { confirm: true, adDirectories: [adDir], clearMinPrice: true, negotiationNotes: "" },
+      config,
+    );
+    await assert.rejects(fs.access(path.join(adDir, ".negotiation.json")));
+  });
+
+  it("marks conversations about local ads and assesses offers", async () => {
+    const { adDir, config, setResult } = await workspaceWithAd();
+    await setKleinanzeigenAdFields({ confirm: true, adDirectories: [adDir], minPrice: 80 }, config);
+
+    setResult({
+      status: "ok",
+      mode: "list",
+      conversations: [
+        { id: "c1:2:3", adId: "3210987654", role: "seller" },
+        { id: "c9:9:9", adId: "5555555555", role: "seller" },
+      ],
+    });
+    const list = await readKleinanzeigenMessages({}, config);
+    assert.deepEqual(list.conversations.map((entry) => entry.managed), [true, false]);
+    assert.equal(list.managedCount, 1);
+
+    setResult({
+      status: "ok",
+      mode: "conversation",
+      conversation: { id: "c1:2:3", adId: "3210987654", role: "seller" },
+      messages: [],
+      latestOffer: { offeredPrice: 70, kind: "BUYER_OFFER_MADE_SELLER_MESSAGE" },
+    });
+    const one = await readKleinanzeigenMessages({ conversationId: "c1:2:3" }, config);
+    assert.equal(one.localAd.title, "Schreibtischlampe Metall");
+    assert.equal(one.localAd.minPrice, 80);
+    assert.deepEqual(one.offerAssessment, {
+      offeredPrice: 70,
+      askingPrice: 100,
+      minPrice: 80,
+      floorUsed: 80,
+      floorSource: "minPrice",
+      ratioToAsking: 0.7,
+      atOrAboveFloor: false,
+      gapToFloor: 10,
+    });
+  });
+
+  it("sends replies only about local ads and with the price floor applied", async () => {
+    const { adDir, calls, config, setResult } = await workspaceWithAd();
+
+    const sent = await sendKleinanzeigenMessage(reply(), config);
+    assert.equal(sent.ok, true);
+    assert.equal(sent.minPriceApplied, 100);
+    assert.equal(sent.minPriceSource, "asking price");
+    const args = calls.at(-1).slice(2);
+    assert.deepEqual(args.slice(args.indexOf("send-message")), [
+      "send-message",
+      "--conversation=c1:2:3",
+      "--text=Hallo Erika, für 90 € gehört sie Ihnen.",
+      "--after=m2",
+      "--ad-id=3210987654",
+      "--min-price=100",
+      "--mark-read",
+    ]);
+
+    await setKleinanzeigenAdFields({ confirm: true, adDirectories: [adDir], minPrice: 80 }, config);
+    await sendKleinanzeigenMessage(reply({ markRead: false }), config);
+    assert.ok(calls.at(-1).includes("--min-price=80"));
+    assert.ok(!calls.at(-1).includes("--mark-read"));
+
+    setResult({ status: "refused", reason: "conversation_moved_on", message: "newer messages" });
+    const refused = await sendKleinanzeigenMessage(reply(), config);
+    assert.equal(refused.ok, false);
+    assert.match(refused.nextActions[0], /read the conversation again/);
+
+    const callsBefore = calls.length;
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(reply({ adId: "5555555555" }), config),
+      /not one of the local ads/,
+    );
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(reply({ text: "Ruf an: 0151 23456789" }), config),
+      /reply not sent: .*phone number/,
+    );
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(reply({ confirm: false }), config),
+      /confirm must be true/,
+    );
+    assert.equal(calls.length, callsBefore, "refused replies never reach the browser");
   });
 });

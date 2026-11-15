@@ -144,6 +144,7 @@ describe("package install boundary", () => {
       "skills/kleinanzeigen-helper-skill/references/draft-publish-preflight.md",
       "skills/kleinanzeigen-helper-skill/references/install.md",
       "skills/kleinanzeigen-helper-skill/references/listing-discovery-scoping.md",
+      "skills/kleinanzeigen-helper-skill/references/negotiation.md",
       "skills/kleinanzeigen-helper-skill/references/non-negotiables.md",
       "skills/kleinanzeigen-helper-skill/references/publish-result-caveats.md",
       "skills/kleinanzeigen-helper-skill/references/selling-routine.md",
@@ -312,7 +313,7 @@ describe("package install boundary", () => {
       const verifyTool = registeredTools.find(
         ({ tool }) => tool.name === "kleinanzeigen_verify",
       )?.tool;
-      assert.equal(registeredTools.length, 16);
+      assert.equal(registeredTools.length, 21);
       assert.equal(registeredHooks.length, 1);
       assert.equal(typeof statusTool?.execute, "function");
       assert.equal(typeof verifyTool?.execute, "function");

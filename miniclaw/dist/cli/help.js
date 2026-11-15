@@ -56,6 +56,7 @@ Commands:
   diagnose - diagnoses browser connection issues
   market-search - reads comparable listings and their price spread (read-only)
   messages - reads conversations of the message box (read-only)
+  send-message - sends one reply in a conversation about one of the account's ads
   --
   help     - displays this help
   version  - displays the application version
@@ -68,6 +69,7 @@ Options:
   --allow-live-browser
   --query=<TEXT> [--category-id=<ID>] [--min-price=<EUR>] [--max-price=<EUR>] [--pages=1-3]
   --conversation=<ID> [--limit=<N>] [--include-buyer]
+  --conversation=<ID> --text=<TEXT> --after=<MESSAGE ID> --ad-id=<ID> [--min-price=<EUR>] [--mark-read]
   --config=<PATH>
   --workspace-mode=portable|xdg
   --logfile=<PATH>

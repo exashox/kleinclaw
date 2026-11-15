@@ -4,11 +4,16 @@
  */
 export const MESSAGEBOX_MAX_LIST = 100;
 export const MESSAGEBOX_MAX_MESSAGES = 100;
-/** Page function; call with a {@link MessageboxRequest}. */
-export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
+export const MESSAGE_MAX_CHARS = 1000;
+/**
+ * Page function for reading (default) and sending (`action: "send"`); call it
+ * with a {@link MessageboxRequest} or a {@link MessageboxSendRequest}.
+ */
+export const MESSAGEBOX_JS = String.raw `async (request) => {
   const GATEWAY = "https://gateway.kleinanzeigen.de";
   const PAGE_SIZE = 30;
   const fail = (step, httpStatus, message) => ({ status: "error", step, httpStatus, message });
+  const refuse = (reason, message, extra) => Object.assign({ status: "refused", reason, message }, extra || {});
   const str = (value) => (value === undefined || value === null ? "" : String(value));
   const cents = (value) => (typeof value === "number" ? value / 100 : null);
 
@@ -41,15 +46,24 @@ export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
     return fail("user-context", null, "message box user context contained no user id");
   }
 
-  const gateway = async (path, step) => {
-    const response = await fetch(GATEWAY + "/messagebox/api/users/" + userId + path, {
+  const gateway = async (path, step, init) => {
+    const response = await fetch(GATEWAY + "/messagebox/api/users/" + userId + path, Object.assign({
       headers: { Authorization: authorization, Accept: "application/json" },
-    });
+    }, init || {}));
     if (!response.ok) {
       throw { step, httpStatus: response.status };
     }
-    return await response.json();
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
   };
+  const post = (path, step, body) => gateway(path, step, {
+    method: "POST",
+    headers: Object.assign(
+      { Authorization: authorization, Accept: "application/json" },
+      body === undefined ? {} : { "Content-Type": "application/json" },
+    ),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
   const summarize = (entry) => {
     const role = str(entry.role).toUpperCase();
@@ -76,42 +90,134 @@ export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
       .trim();
   };
 
+  const conversationMessages = (detail) => (Array.isArray(detail.messages) ? detail.messages : [])
+    .map((message) => {
+      const isOffer = str(message.type) === "PAYMENT_AND_SHIPPING_MESSAGE";
+      const boundness = str(message.boundness).toUpperCase();
+      const at = message.receivedDate ? str(message.receivedDate) : null;
+      return {
+        id: message.messageId ? str(message.messageId)
+          : message.offerId ? "offer:" + str(message.offerId) + ":" + str(message.paymentAndShippingMessageType)
+          : at ? "at:" + at : null,
+        direction: isOffer ? "system" : boundness === "OUTBOUND" ? "out" : "in",
+        at,
+        text: longestText(message),
+        attachments: Array.isArray(message.attachments) ? message.attachments.length : 0,
+        offer: isOffer
+          ? {
+            kind: str(message.paymentAndShippingMessageType),
+            offeredPrice: cents(message.offeredPriceInEuroCent),
+            itemPrice: cents(message.itemPriceInEuroCent),
+            shippingCost: cents(message.shippingCostInEuroCent),
+          }
+          : null,
+      };
+    })
+    // The API returns blank inbound entries next to one's own messages.
+    .filter((message) => message.text || message.attachments || message.offer)
+    .sort((a, b) => str(a.at).localeCompare(str(b.at)));
+
+  // Euro amounts in a text; amounts next to shipping words are left out.
+  const AMOUNT = /(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s*(?:€|euro\b|eur\b)/gi;
+  const SHIPPING = /versand|porto|dhl|hermes|dpd|gls|paket|zzgl|shipping/i;
+  const amountsIn = (text, skipShipping) => {
+    const amounts = [];
+    for (const match of String(text).matchAll(AMOUNT)) {
+      const around = String(text).slice(Math.max(0, match.index - 25), match.index + match[0].length + 25);
+      if (skipShipping && SHIPPING.test(around)) {
+        continue;
+      }
+      amounts.push(Number(match[1].replace(/\./g, "")) + (match[2] ? Number(match[2].padEnd(2, "0")) / 100 : 0));
+    }
+    return amounts;
+  };
+
   try {
+    if (request.action === "send") {
+      const detail = await gateway(
+        "/conversations/" + encodeURIComponent(request.conversationId) + "?contentWarnings=true",
+        "conversation",
+      );
+      const conversation = summarize(detail);
+      if (conversation.role !== "seller") {
+        return refuse("not_seller", "replies are only sent in conversations about the account's own ads");
+      }
+      if (conversation.adId !== request.expectedAdId) {
+        return refuse("ad_mismatch", "the conversation is about a different ad");
+      }
+      const all = conversationMessages(detail);
+      const newest = all.length ? all[all.length - 1] : null;
+      const recentMessages = all.slice(-5);
+      if (!newest || newest.id !== request.afterMessageId) {
+        return refuse("conversation_moved_on", "the conversation has newer messages; read it again", {
+          newestMessageId: newest ? newest.id : null,
+          recentMessages,
+        });
+      }
+      if (newest.direction === "out") {
+        return refuse("awaiting_buyer", "the last message is already from the seller; wait for the buyer", {
+          newestMessageId: newest.id,
+          recentMessages,
+        });
+      }
+      if (typeof request.minPrice === "number") {
+        const named = new Set();
+        for (const message of all) {
+          if (message.direction !== "out") {
+            amountsIn(message.text, false).forEach((value) => named.add(value));
+          }
+          if (message.offer && message.offer.offeredPrice !== null) {
+            named.add(message.offer.offeredPrice);
+          }
+        }
+        const tooLow = amountsIn(request.text, true)
+          .filter((value) => value < request.minPrice && !named.has(value));
+        if (tooLow.length) {
+          return refuse(
+            "below_min_price",
+            "the reply names " + tooLow.join(", ") + " EUR, below the minimum price for this ad",
+          );
+        }
+      }
+      await post(
+        "/conversations/" + encodeURIComponent(request.conversationId) + "?warnPhoneNumber=true",
+        "send",
+        { message: request.text },
+      );
+      let markedRead = false;
+      if (request.markRead) {
+        try {
+          await post("/conversations/read?ids=" + encodeURIComponent(request.conversationId), "mark-read");
+          markedRead = true;
+        } catch {
+          // The reply is out; an unread marker is not worth failing for.
+        }
+      }
+      return { status: "sent", conversationId: request.conversationId, adId: conversation.adId, markedRead };
+    }
+
     if (request.conversationId) {
       const detail = await gateway(
         "/conversations/" + encodeURIComponent(request.conversationId) + "?contentWarnings=true",
         "conversation",
       );
-      const all = (Array.isArray(detail.messages) ? detail.messages : [])
-        .map((message) => {
-          const isOffer = str(message.type) === "PAYMENT_AND_SHIPPING_MESSAGE";
-          const boundness = str(message.boundness).toUpperCase();
-          return {
-            id: message.messageId ? str(message.messageId) : null,
-            direction: isOffer ? "system" : boundness === "OUTBOUND" ? "out" : "in",
-            at: message.receivedDate ? str(message.receivedDate) : null,
-            text: longestText(message),
-            attachments: Array.isArray(message.attachments) ? message.attachments.length : 0,
-            offer: isOffer
-              ? {
-                kind: str(message.paymentAndShippingMessageType),
-                offeredPrice: cents(message.offeredPriceInEuroCent),
-                itemPrice: cents(message.itemPriceInEuroCent),
-                shippingCost: cents(message.shippingCostInEuroCent),
-              }
-              : null,
-          };
-        })
-        // The API returns blank inbound entries next to one's own messages.
-        .filter((message) => message.text || message.attachments || message.offer)
-        .sort((a, b) => str(a.at).localeCompare(str(b.at)));
+      const all = conversationMessages(detail);
       const messages = all.slice(-request.limit);
+      const newest = all.length ? all[all.length - 1] : null;
+      const offers = all.filter((message) => message.offer);
+      const priced = offers.filter((message) => message.offer.offeredPrice !== null);
+      const latest = priced.length ? priced[priced.length - 1] : null;
       return {
         status: "ok",
         mode: "conversation",
         conversation: summarize(detail),
         messages,
         truncated: messages.length < all.length,
+        newestMessageId: newest ? newest.id : null,
+        awaitingReply: Boolean(newest && newest.direction !== "out"),
+        latestOffer: latest ? Object.assign({ at: latest.at }, latest.offer) : null,
+        offerStatus: offers.length ? offers[offers.length - 1].offer.kind : null,
+        paid: Boolean(detail.paymentAnalyticsData && detail.paymentAnalyticsData.paymentId),
       };
     }
 
@@ -120,8 +226,8 @@ export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
     let total = null;
     for (let page = 0; page < 20 && conversations.length < request.limit; page += 1) {
       const body = await gateway("/conversations?page=" + page + "&size=" + PAGE_SIZE, "conversations");
-      const entries = Array.isArray(body.conversations) ? body.conversations : [];
-      if (body._meta && typeof body._meta.numFound === "number") {
+      const entries = Array.isArray(body && body.conversations) ? body.conversations : [];
+      if (body && body._meta && typeof body._meta.numFound === "number") {
         total = body._meta.numFound;
       }
       for (const entry of entries) {
@@ -134,7 +240,7 @@ export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
           conversations.push(summary);
         }
       }
-      const pageSize = (body._meta && body._meta.pageSize) || PAGE_SIZE;
+      const pageSize = (body && body._meta && body._meta.pageSize) || PAGE_SIZE;
       if (entries.length < pageSize || (total !== null && (page + 1) * pageSize >= total)) {
         break;
       }
@@ -147,9 +253,43 @@ export const MESSAGEBOX_READ_JS = String.raw `async (request) => {
     return fail("gateway", null, str(error && error.message));
   }
 }`;
+/** @deprecated Same script as {@link MESSAGEBOX_JS}; kept for readers of 0.4.0. */
+export const MESSAGEBOX_READ_JS = MESSAGEBOX_JS;
+const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9:_-]{3,100}$/;
+const MESSAGE_ID_PATTERN = /^[A-Za-z0-9:@._+-]{1,200}$/;
+const PHONE_SEPARATORS = String.raw `[\s\-/(). ]`;
+const MESSAGE_CHECKS = [
+    [new RegExp(String.raw `(?:\+|00)\d{1,3}${PHONE_SEPARATORS}*\d(?:${PHONE_SEPARATORS}*\d){6,}`), "a phone number"],
+    // Without "." as separator, so dates such as 08.11.2026 do not count.
+    [/\b0\d[\s\-/() ]*\d(?:[\s\-/() ]*\d){5,}/, "a phone number"],
+    [/\d{9,}/, "a long number (phone or account number)"],
+    [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/, "an email address"],
+    [/\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:de|com|net|org|info|eu|io|me|ly)\b/i, "a link"],
+    [/\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}\b/, "an IBAN"],
+];
+/**
+ * Reasons a reply must not go out unattended: contact data, links, and
+ * account numbers are what scams and accidental oversharing look like.
+ */
+export function findMessageProblems(text) {
+    const problems = [];
+    const trimmed = text.trim();
+    if (!trimmed) {
+        problems.push("the reply is empty");
+    }
+    if (trimmed.length > MESSAGE_MAX_CHARS) {
+        problems.push(`the reply is longer than ${MESSAGE_MAX_CHARS} characters`);
+    }
+    for (const [pattern, label] of MESSAGE_CHECKS) {
+        if (pattern.test(trimmed) && !problems.includes(`the reply contains ${label}`)) {
+            problems.push(`the reply contains ${label}`);
+        }
+    }
+    return problems;
+}
 export function normalizeMessageboxRequest(request) {
     const conversationId = request.conversationId?.trim() || null;
-    if (conversationId !== null && !/^[A-Za-z0-9:_-]{3,100}$/.test(conversationId)) {
+    if (conversationId !== null && !CONVERSATION_ID_PATTERN.test(conversationId)) {
         throw new Error("conversation id must contain only letters, digits, ':', '_' or '-'");
     }
     const max = conversationId ? MESSAGEBOX_MAX_MESSAGES : MESSAGEBOX_MAX_LIST;
@@ -158,5 +298,36 @@ export function normalizeMessageboxRequest(request) {
         conversationId,
         limit,
         includeBuyerConversations: request.includeBuyerConversations === true,
+    };
+}
+export function normalizeMessageboxSendRequest(request) {
+    const conversationId = request.conversationId?.trim() ?? "";
+    if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
+        throw new Error("conversation id must contain only letters, digits, ':', '_' or '-'");
+    }
+    const afterMessageId = request.afterMessageId?.trim() ?? "";
+    if (!MESSAGE_ID_PATTERN.test(afterMessageId)) {
+        throw new Error("the id of the newest message the reply answers is required");
+    }
+    const expectedAdId = request.expectedAdId?.trim() ?? "";
+    if (!/^\d{6,15}$/.test(expectedAdId)) {
+        throw new Error("the numeric ad id of the conversation is required");
+    }
+    const text = request.text?.trim() ?? "";
+    const problems = findMessageProblems(text);
+    if (problems.length) {
+        throw new Error(`reply not sent: ${problems.join("; ")}`);
+    }
+    if (request.minPrice !== null && (!Number.isFinite(request.minPrice) || request.minPrice < 0)) {
+        throw new Error("minimum price must be a non-negative number");
+    }
+    return {
+        action: "send",
+        conversationId,
+        text,
+        afterMessageId,
+        expectedAdId,
+        minPrice: request.minPrice,
+        markRead: request.markRead,
     };
 }

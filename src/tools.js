@@ -16,6 +16,7 @@ import {
   sanitizeText,
   searchKleinanzeigenCategories,
   searchKleinanzeigenMarket,
+  sendKleinanzeigenMessage,
   setKleinanzeigenAdActive,
   setKleinanzeigenAdFields,
 } from "./cli.js";
@@ -30,6 +31,7 @@ export const SIDE_EFFECT_TOOL_NAMES = new Set([
   "kleinanzeigen_draft_ad",
   "kleinanzeigen_set_ad_active",
   "kleinanzeigen_set_ad_fields",
+  "kleinanzeigen_send_message",
 ]);
 
 export function resolveApprovalToolNames(tools, config = {}) {
@@ -118,6 +120,19 @@ export function buildKleinanzeigenApprovalDescription({ toolName, params = {}, c
   }
   if (typeof params.publishedAdId === "string") {
     lines.push(`Record published ad ID: ${truncateText(params.publishedAdId, 16)}`);
+  }
+  if (params.minPrice !== undefined) {
+    lines.push(`Minimum price: ${truncateText(String(params.minPrice), 12)} EUR`);
+  }
+  if (params.clearMinPrice === true) {
+    lines.push("Minimum price: remove");
+  }
+  if (typeof params.negotiationNotes === "string") {
+    lines.push(`Negotiation notes: ${truncateText(params.negotiationNotes || "(remove)", 60)}`);
+  }
+  if (typeof params.conversationId === "string" && typeof params.text === "string") {
+    lines.push(`Conversation: ${truncateText(params.conversationId, 40)} (ad ${truncateText(String(params.adId ?? "?"), 16)})`);
+    lines.push(`Reply: ${truncateText(params.text.replace(/\s+/g, " "), 100)}`);
   }
   if (typeof params.selector === "string") {
     lines.push(`Selector: ${truncateText(params.selector, 44)}`);
@@ -624,9 +639,11 @@ function messagesTool(config) {
     description:
       "Read the Kleinanzeigen message box in the browser. Without conversationId: list " +
       "conversations about the account's own ads (ad ID, ad title, buyer, unread count, " +
-      "last activity). With conversationId: return that conversation's messages, oldest " +
-      "first, including price offers. Read-only; does not mark anything as read and " +
-      "cannot send replies.",
+      "last activity; managed: true when the ad is a local ad). With conversationId: " +
+      "return that conversation's messages oldest first, including price offers, " +
+      "newestMessageId (needed to reply), awaitingReply, and for local ads localAd and " +
+      "offerAssessment. Read-only; does not mark anything as read. Reply with " +
+      "kleinanzeigen_send_message.",
     parameters: objectSchema({
       conversationId: {
         type: "string",
@@ -778,11 +795,79 @@ function setAdFieldsTool(config) {
             "Kleinanzeigen ad ID and today as publication date, so the due republication " +
             "does not publish it again.",
         },
+        minPrice: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Lowest price in whole euros the user accepts in negotiations (never tell buyers). " +
+            "Stored locally next to the ad. Without it, replies may not name a price below " +
+            "the asking price.",
+        },
+        clearMinPrice: {
+          type: "boolean",
+          description: "true removes the stored minPrice.",
+        },
+        negotiationNotes: {
+          type: "string",
+          maxLength: 500,
+          description:
+            "The user's negotiation instructions for this item, e.g. \"pickup only\", " +
+            "\"bundle with the lamp for 40\". Stored locally; empty text removes them.",
+        },
       },
       ["confirm"],
     ),
     operation: "set_ad_fields",
     handler: (toolConfig, params) => setKleinanzeigenAdFields(params, toolConfig),
+  });
+}
+
+function sendMessageTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_send_message",
+    label: "Kleinanzeigen Send Message",
+    description:
+      "Send one reply in a Kleinanzeigen conversation about one of the local ads. Right " +
+      "before sending, the conversation is read again: the reply is refused if the buyer " +
+      "wrote something newer than afterMessageId, if the last message is already the " +
+      "seller's, if the conversation is about another ad, or if the text names a price " +
+      "below the ad's minPrice (the asking price when none is set). Text with phone " +
+      "numbers, email addresses, links, or account numbers is refused. Cannot accept or " +
+      "decline \"Direkt kaufen\" offers.",
+    parameters: objectSchema(
+      {
+        confirm: confirmSchema,
+        conversationId: {
+          type: "string",
+          pattern: "^[A-Za-z0-9:_-]{3,100}$",
+          description: "Conversation ID from kleinanzeigen_messages.",
+        },
+        adId: {
+          type: "string",
+          pattern: "^[0-9]{6,15}$",
+          description: "Ad ID of the conversation; must belong to a local ad.",
+        },
+        afterMessageId: {
+          type: "string",
+          description:
+            "newestMessageId from reading this conversation with kleinanzeigen_messages; " +
+            "the message this reply answers.",
+        },
+        text: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1000,
+          description: "The reply as the buyer will read it.",
+        },
+        markRead: {
+          type: "boolean",
+          description: "Mark the conversation as read after sending. Defaults to true.",
+        },
+      },
+      ["confirm", "conversationId", "adId", "afterMessageId", "text"],
+    ),
+    operation: "send_message",
+    handler: (toolConfig, params) => sendKleinanzeigenMessage(params, toolConfig),
   });
 }
 
@@ -889,6 +974,7 @@ export function createKleinanzeigenTools(config = {}) {
     draftAdTool(config),
     setAdActiveTool(config),
     setAdFieldsTool(config),
+    sendMessageTool(config),
     configuredOperationTool(config, {
       name: "kleinanzeigen_verify",
       label: "Kleinanzeigen Verify",

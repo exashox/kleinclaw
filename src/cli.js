@@ -1925,11 +1925,13 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
       if (query && !haystack.includes(query)) {
         continue;
       }
+      const negotiation = await readNegotiation(directory);
       ads.push({
         adDirectory: displayPathForAd(directory, root),
         adPath: displayPathForAd(adConfigPath, root),
         relativeDirectory: relDir,
         ...summary,
+        ...(negotiation ? { negotiation } : {}),
       });
       if (ads.length >= maxResults) {
         return { ok: true, operation: "list_ads", count: ads.length, ads };
@@ -2136,10 +2138,67 @@ const AD_PRICE_TYPES = ["FIXED", "NEGOTIABLE", "GIVE_AWAY"];
  * sold marker, and the record of a publication done by hand. Marking an ad
  * sold also deactivates it, so publish and the "due" republication skip it.
  */
+// Negotiation settings live next to the ad, not in it: changing them must not
+// change the ad's content hash, and miniclaw never loads dotfiles as ads.
+const NEGOTIATION_FILE = ".negotiation.json";
+const NEGOTIATION_NOTES_MAX = 500;
+
+async function readNegotiation(adDirectory) {
+  let raw;
+  try {
+    raw = JSON.parse(await fs.readFile(path.join(adDirectory, NEGOTIATION_FILE), "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw new Error(`${NEGOTIATION_FILE} in an ad folder is not valid JSON`);
+  }
+  const minPrice = Number.isInteger(raw?.minPrice) && raw.minPrice >= 0 ? raw.minPrice : null;
+  const notes = typeof raw?.notes === "string" ? raw.notes.slice(0, NEGOTIATION_NOTES_MAX) : "";
+  return minPrice === null && !notes ? null : { minPrice, notes };
+}
+
+function negotiationUpdate(params) {
+  const update = {};
+  if (params.minPrice !== undefined && params.clearMinPrice === true) {
+    throw new Error("minPrice and clearMinPrice cannot be combined");
+  }
+  if (params.minPrice !== undefined) {
+    if (!Number.isInteger(params.minPrice) || params.minPrice < 0) {
+      throw new Error("minPrice must be a whole number of euros");
+    }
+    update.minPrice = params.minPrice;
+  }
+  if (params.clearMinPrice === true) {
+    update.minPrice = null;
+  }
+  if (params.negotiationNotes !== undefined) {
+    if (typeof params.negotiationNotes !== "string" ||
+      params.negotiationNotes.length > NEGOTIATION_NOTES_MAX) {
+      throw new Error(`negotiationNotes must be text up to ${NEGOTIATION_NOTES_MAX} characters`);
+    }
+    update.notes = params.negotiationNotes.trim();
+  }
+  return Object.keys(update).length ? update : null;
+}
+
+async function writeNegotiation(adDirectory, update) {
+  const current = await readNegotiation(adDirectory) ?? { minPrice: null, notes: "" };
+  const next = { ...current, ...update };
+  const filePath = path.join(adDirectory, NEGOTIATION_FILE);
+  if (next.minPrice === null && !next.notes) {
+    await fs.rm(filePath, { force: true });
+    return null;
+  }
+  await fs.writeFile(filePath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
+}
+
 export async function setKleinanzeigenAdFields(params = {}, config = {}, { now = new Date() } = {}) {
   if (params.confirm !== true) {
     throw new Error("confirm must be true before changing ad fields");
   }
+  const negotiation = negotiationUpdate(params);
   const updates = [];
   let publishedAdId = null;
   if (params.publishedAdId !== undefined) {
@@ -2169,8 +2228,10 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
       updates.push(["active", "false"]);
     }
   }
-  if (!updates.length && publishedAdId === null) {
-    throw new Error("set at least one of price, priceType, sold, publishedAdId");
+  if (!updates.length && publishedAdId === null && negotiation === null) {
+    throw new Error(
+      "set at least one of price, priceType, sold, publishedAdId, minPrice, negotiationNotes",
+    );
   }
 
   const adConfigPath = await resolveSingleAdConfig(params, config);
@@ -2194,19 +2255,31 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
     (text, [key, value]) => setYamlTopLevelScalar(text, key, value),
     beforeText,
   );
+  const afterSummary = parseAdSummary(afterText);
+  const askingPrice = Number(afterSummary.price);
+  if (negotiation?.minPrice != null && Number.isFinite(askingPrice) && afterSummary.price !== null &&
+    negotiation.minPrice > askingPrice) {
+    throw new Error("minPrice must not be higher than the ad's price");
+  }
   const changed = afterText !== beforeText;
   if (changed) {
     await fs.writeFile(adConfigPath, afterText, "utf8");
   }
+  const negotiationResult = negotiation === null
+    ? await readNegotiation(path.dirname(adConfigPath))
+    : await writeNegotiation(path.dirname(adConfigPath), negotiation);
 
   return {
     ok: true,
     operation: "set_ad_fields",
-    changed,
+    changed: changed || negotiation !== null,
     adPath: displayPathForAd(adConfigPath, root),
     previous: parseAdSummary(beforeText),
-    summary: parseAdSummary(afterText),
-    nextActions: sold
+    summary: afterSummary,
+    negotiation: negotiationResult,
+    nextActions: negotiation !== null && !updates.length && publishedAdId === null
+      ? ["negotiation settings are local only; nothing to publish"]
+      : sold
       ? ["the ad is sold and no longer eligible for publish/update"]
       : publishedAdId !== null && !updates.some(([key]) => key.startsWith("price"))
         ? ["the ad is recorded as online; the due republication counts from now"]
@@ -3122,7 +3195,39 @@ export async function readKleinanzeigenMessages(params = {}, config = {}) {
   const limit = optionalWholeNumber(params.limit, "limit", { min: 1, max: 100 });
   if (limit !== undefined) args.push(`--limit=${limit}`);
   if (params.includeBuyerConversations === true) args.push("--include-buyer");
-  const result = await runBrowserRead("messages", "messages", args, config);
+  const result = messageboxOutcome(await runBrowserRead("messages", "messages", args, config));
+  if (!result.ok) {
+    return result;
+  }
+  const managed = await managedAdsById(config);
+  if (!managed) {
+    return result;
+  }
+  if (result.mode === "list" && Array.isArray(result.conversations)) {
+    result.conversations = result.conversations.map((conversation) => {
+      const ad = conversation.adId ? managed.get(conversation.adId) : undefined;
+      return {
+        ...conversation,
+        managed: Boolean(ad),
+        ...(ad ? { adDirectory: ad.adDirectory } : {}),
+      };
+    });
+    result.managedCount = result.conversations.filter((conversation) => conversation.managed).length;
+  }
+  if (result.mode === "conversation" && result.conversation) {
+    const ad = result.conversation.adId ? managed.get(result.conversation.adId) : undefined;
+    result.managed = Boolean(ad);
+    if (ad) {
+      result.localAd = localAdContext(ad);
+      if (result.latestOffer?.offeredPrice != null) {
+        result.offerAssessment = assessOffer(result.latestOffer.offeredPrice, result.localAd);
+      }
+    }
+  }
+  return result;
+}
+
+function messageboxOutcome(result) {
   if (result.ok && result.status === "not_logged_in") {
     return {
       ...result,
@@ -3133,10 +3238,109 @@ export async function readKleinanzeigenMessages(params = {}, config = {}) {
         "in the browser, then try again.",
     };
   }
-  if (result.ok && result.status === "error") {
+  if (result.ok && (result.status === "error" || result.status === "refused")) {
     return { ...result, ok: false };
   }
   return result;
+}
+
+/** Local ads with a Kleinanzeigen ID, by ID; null when no adRoots are configured. */
+async function managedAdsById(config) {
+  if (!normalizeStringArray(config.adRoots, "adRoots", { maxItems: 50 }).length) {
+    return null;
+  }
+  const { ads } = await listKleinanzeigenAds(config, { maxResults: 200 });
+  return new Map(ads.filter((ad) => ad.id).map((ad) => [String(ad.id), ad]));
+}
+
+function localAdContext(ad, now = new Date()) {
+  const price = ad.price === null || ad.price === undefined ? null : Number(ad.price);
+  const created = ad.createdOn ? Date.parse(String(ad.createdOn).replace(/^'|'$/g, "")) : NaN;
+  return {
+    adDirectory: ad.adDirectory,
+    title: ad.title,
+    price: Number.isFinite(price) ? price : null,
+    priceType: ad.priceType ?? null,
+    sold: Boolean(ad.sold),
+    daysOnline: Number.isFinite(created) ? Math.floor((now.getTime() - created) / 86400000) : null,
+    minPrice: ad.negotiation?.minPrice ?? null,
+    negotiationNotes: ad.negotiation?.notes ?? "",
+  };
+}
+
+/** Numbers for judging a buyer's price offer; the decision stays with agent and user. */
+function assessOffer(offeredPrice, localAd) {
+  const asking = localAd.price;
+  const floor = localAd.minPrice ?? asking;
+  return {
+    offeredPrice,
+    askingPrice: asking,
+    minPrice: localAd.minPrice,
+    floorUsed: floor,
+    floorSource: localAd.minPrice !== null ? "minPrice" : asking !== null ? "asking price" : null,
+    ratioToAsking: asking ? Math.round((offeredPrice / asking) * 100) / 100 : null,
+    atOrAboveFloor: floor === null ? null : offeredPrice >= floor,
+    gapToFloor: floor === null ? null : Math.round((floor - offeredPrice) * 100) / 100,
+  };
+}
+
+const MESSAGE_ID_RE = /^[A-Za-z0-9:@._+-]{1,200}$/;
+
+export async function sendKleinanzeigenMessage(params = {}, config = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before sending a message");
+  }
+  if (typeof params.conversationId !== "string" || !CONVERSATION_ID_RE.test(params.conversationId)) {
+    throw new Error("conversationId must contain only letters, digits, ':', '_' or '-'");
+  }
+  if (typeof params.afterMessageId !== "string" || !MESSAGE_ID_RE.test(params.afterMessageId)) {
+    throw new Error("afterMessageId must be newestMessageId from kleinanzeigen_messages");
+  }
+  const adId = String(params.adId ?? "").trim();
+  if (!/^\d{6,15}$/.test(adId)) {
+    throw new Error("adId must be the numeric Kleinanzeigen ad ID of the conversation");
+  }
+  if (typeof params.text !== "string") {
+    throw new Error("text must be the reply text");
+  }
+  const { findMessageProblems } = await import("../miniclaw/dist/messagebox.js");
+  const problems = findMessageProblems(params.text);
+  if (problems.length) {
+    throw new Error(`reply not sent: ${problems.join("; ")}`);
+  }
+  const managed = await managedAdsById(config);
+  if (!managed) {
+    throw new Error("plugin config must set adRoots before replies can be sent");
+  }
+  const ad = managed.get(adId);
+  if (!ad) {
+    throw new Error(
+      `ad ${adId} is not one of the local ads; replies go only to conversations about them`,
+    );
+  }
+  const localAd = localAdContext(ad);
+  // Without an explicit minimum price the asking price is the floor: no discount unless agreed.
+  const floor = localAd.minPrice ??
+    (localAd.price !== null && localAd.priceType !== "GIVE_AWAY" ? Math.floor(localAd.price) : null);
+  const args = [
+    `--conversation=${params.conversationId}`,
+    `--text=${params.text.trim()}`,
+    `--after=${params.afterMessageId}`,
+    `--ad-id=${adId}`,
+  ];
+  if (floor !== null) args.push(`--min-price=${floor}`);
+  if (params.markRead !== false) args.push("--mark-read");
+  const result = messageboxOutcome(
+    await runBrowserRead("send_message", "send-message", args, config),
+  );
+  return {
+    ...result,
+    minPriceApplied: floor,
+    minPriceSource: localAd.minPrice !== null ? "minPrice" : floor !== null ? "asking price" : null,
+    ...(result.status === "refused" && result.reason === "conversation_moved_on"
+      ? { nextActions: ["read the conversation again, then answer the newest messages"] }
+      : {}),
+  };
 }
 
 export async function runKleinanzeigenOperation(operation, params = {}, config = {}) {
