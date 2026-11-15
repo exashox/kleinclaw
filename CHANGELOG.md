@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0 - 2026-11-15
+
+- add `kleinanzeigen_send_message`: replies in conversations about local ads;
+  re-reads the conversation right before sending and refuses when the buyer
+  wrote something newer, when it is the buyer's turn, when the conversation is
+  about another ad, or when the reply names a price below the ad's minimum
+  price (asking price when none is set); refuses phone numbers, email
+  addresses, links, and account numbers; marks the conversation read
+- `kleinanzeigen_set_ad_fields`: `minPrice`, `clearMinPrice`, and
+  `negotiationNotes`, stored in `.negotiation.json` next to the ad
+- `kleinanzeigen_messages`: `managed` marker for conversations about local ads,
+  `newestMessageId`, `awaitingReply`, `latestOffer`, `offerStatus`, `paid`, and
+  for local ads `localAd` and `offerAssessment`
+- `kleinanzeigen_list_ads` shows stored negotiation settings
+- helper skill: buyer conversations and negotiation guide (judging offers,
+  countering, several buyers, scams, what needs the user, schedule)
+
 ## 0.4.0 - 2026-11-09
 
 - add `kleinanzeigen_market_search`: reads current listings for a query
