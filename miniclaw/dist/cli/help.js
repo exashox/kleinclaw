@@ -70,6 +70,7 @@ Options:
   --query=<TEXT> [--category-id=<ID>] [--min-price=<EUR>] [--max-price=<EUR>] [--pages=1-3]
   --conversation=<ID> [--limit=<N>] [--include-buyer]
   --conversation=<ID> --text=<TEXT> --after=<MESSAGE ID> --ad-id=<ID> [--min-price=<EUR>] [--mark-read]
+  --download-dir=<PATH> (download only: overrides download.dir)
   --config=<PATH>
   --workspace-mode=portable|xdg
   --logfile=<PATH>

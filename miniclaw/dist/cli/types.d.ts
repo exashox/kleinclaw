@@ -20,6 +20,8 @@ export interface ParsedArgs {
     allowLiveBrowser: boolean;
     verbose: boolean;
     lang: string | null;
+    /** Overrides download.dir for this run (used by KleinClaw sync checks). */
+    downloadDir?: string | null;
     /** Options of the read-only browser commands (market-search, messages). */
     read?: ReadCommandOptions;
 }

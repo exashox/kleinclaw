@@ -3,7 +3,13 @@
 - `kleinanzeigen_status`: check runtime availability, config wiring, workspace
   mode, version, and supported commands without reading the config contents.
 - `kleinanzeigen_list_ads`: discover configured local ad folders and return
-  titles, IDs, active state, and relative handles for scoped operations.
+  internal IDs, titles, Kleinanzeigen IDs, active state, and relative handles,
+  plus ads without internal ID and duplicate internal IDs.
+- `kleinanzeigen_find_ad`: resolve what the user calls an ad (`#12`, a
+  Kleinanzeigen ID, or title words) to internal ID, Kleinanzeigen ID, title,
+  and folder. Use it before every ad-specific action.
+- `kleinanzeigen_assign_internal_ids`: give all local ads without
+  `internal_id` the next free number (after confirmation).
 - `kleinanzeigen_ad_schema`: inspect the safe ad config schema and draft
   workflow exposed by KleinClaw.
 - `kleinanzeigen_categories`: search categories by keyword and return full
@@ -26,9 +32,15 @@
   `adRoots`, with contact fields redacted by default.
 - `kleinanzeigen_images_list`: list image files under one configured ad
   directory and return relative globs usable in an ad draft.
-- `kleinanzeigen_set_ad_fields`: change `price` or `priceType` of one ad, or
-  mark it `sold` (also sets `active: false` and `sold_on`). `minPrice` and
+- `kleinanzeigen_set_ad_fields`: change `title`, `description`, `price`, or
+  `priceType` of one ad, or mark it `sold` (also sets `active: false` and
+  `sold_on`). Local only; a scoped `kleinanzeigen_update` sends it live. `minPrice` and
   `negotiationNotes` store the user's negotiation limits next to the ad.
+- `kleinanzeigen_set_ad_images`: set the images of one ad in display order
+  (first = cover); copies photos from an inbox folder under `adRoots`.
+- `kleinanzeigen_sync_check`: download one published ad temporarily and
+  compare it with the local `ad.yaml`; `apply`/`applyImages` take over the
+  online version. Opens the live browser, changes nothing online.
 - `kleinanzeigen_browser_status`: inspect sanitized effective browser settings
   and detected local browsers.
 - `kleinanzeigen_browser_check`: test current or proposed browser settings
@@ -49,8 +61,8 @@
   and stops before submitting; the user reviews and submits in the browser.
   Prefer this when the user wants to check an ad before it goes live.
 - `kleinanzeigen_update`: update changed, all, or explicitly selected live ads.
-- `kleinanzeigen_delete`: delete only explicitly selected live Kleinanzeigen ad
-  IDs. Deleted listings may not be reversible from the plugin.
+- `kleinanzeigen_delete`: delete only explicitly selected live ads (`adIds` or
+  `internalIds`). Deleted listings may not be reversible from the plugin.
 - `kleinanzeigen_download`: download new, all, or explicitly selected live ads
   into the local workspace.
 - `kleinanzeigen_extend`: extend all eligible live ads or explicitly selected

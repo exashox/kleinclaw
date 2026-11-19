@@ -63,7 +63,7 @@ export async function loadDownloadCommand(
     : [];
   return {
     config,
-    downloadDir: resolveDownloadDir(config, parsed.configPath, workspace),
+    downloadDir: parsed.downloadDir ?? resolveDownloadDir(config, parsed.configPath, workspace),
     effectiveSelector,
     savedAds,
   };

@@ -11,11 +11,14 @@ to run listings, republication, reports, and buyer messages.
   different item, even when items look alike.
 - When the user sends several items at once, confirm which images and which
   description belong to which item before drafting anything.
+- Each ad has a fixed internal ID (see Internal IDs, Image Order, and Sync).
+  Name ads by internal ID and title in every report and question.
 
 ### From photos to a listing
 
 1. Save the user's photos into the item's folder and check them with
-   `kleinanzeigen_images_list`.
+   `kleinanzeigen_images_list`. Order them for buyers and write the order with
+   `kleinanzeigen_set_ad_images` once the draft exists.
 2. Research the item (model, specs, condition hints from the photos) with the
    tools available to you. Only state facts you can support.
 3. Estimate the market value with `kleinanzeigen_market_search`: search the

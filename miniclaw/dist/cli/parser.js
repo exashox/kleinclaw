@@ -118,6 +118,12 @@ export function parseArgs(argv) {
             index = option.nextIndex;
             continue;
         }
+        if (arg === "--download-dir" || arg.startsWith("--download-dir=")) {
+            const option = readOptionValue(argv, index, "--download-dir");
+            parsed.downloadDir = option.value ? resolvePath(option.value) : null;
+            index = option.nextIndex;
+            continue;
+        }
         if (arg.startsWith("--lang")) {
             const option = readOptionValue(argv, index, "--lang");
             parsed.lang = option.value;

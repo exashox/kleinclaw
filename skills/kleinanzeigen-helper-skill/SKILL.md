@@ -24,6 +24,9 @@ explicit user confirmation before running them.
   publishing a drafted ad.
 - Read [Listing Discovery and Scoping](references/listing-discovery-scoping.md)
   before acting on a specific listing.
+- Read [Internal IDs, Image Order, and Sync](references/internal-ids-images-sync.md)
+  whenever the user names an ad, sends photos, wants an ad changed, or edited an
+  ad on kleinanzeigen.de.
 - Read [Browser Behaviour](references/browser-behaviour.md) when diagnosing or
   changing runtime browser settings.
 - Read [Publish Result Caveats](references/publish-result-caveats.md) when
