@@ -37,6 +37,9 @@ const METADATA_FIELDS = new Set([
   "repostCount",
   "price_reduction_count",
   "priceReductionCount",
+  // Local KleinClaw reference; never part of the listing content.
+  "internal_id",
+  "internalId",
 ]);
 
 function hashFloat(value: number | null): HashFloatValue | null {

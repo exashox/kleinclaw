@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1346,6 +1347,7 @@ async function resolveBrowserUpdates(params = {}, cliConfig, currentBrowserConfi
 function parseAdSummary(text) {
   const summary = {
     active: null,
+    internalId: null,
     id: null,
     title: "",
     price: null,
@@ -1357,6 +1359,7 @@ function parseAdSummary(text) {
     sold: false,
     soldOn: null,
     imageGlobs: [],
+    imagesFingerprint: null,
   };
   let inImages = false;
 
@@ -1370,6 +1373,10 @@ function parseAdSummary(text) {
         summary.active = value === "true" ? true : value === "false" ? false : null;
       } else if (topLevel[1] === "id") {
         summary.id = value || null;
+      } else if (topLevel[1] === INTERNAL_ID_KEY) {
+        summary.internalId = parseInternalIdValue(value);
+      } else if (topLevel[1] === IMAGES_FINGERPRINT_KEY) {
+        summary.imagesFingerprint = value || null;
       } else if (topLevel[1] === "title") {
         summary.title = value;
       } else if (topLevel[1] === "price") {
@@ -1409,6 +1416,7 @@ function parseAdOperationState(text, filePath = "") {
     try {
       const parsed = JSON.parse(text);
       return {
+        internalId: parseInternalIdValue(parsed.internal_id),
         id: parsed.id ? String(parsed.id) : null,
         title: typeof parsed.title === "string" ? parsed.title : "",
         updatedOn: typeof parsed.updated_on === "string" ? parsed.updated_on : "",
@@ -1417,11 +1425,20 @@ function parseAdOperationState(text, filePath = "") {
         repostCount: Number.isInteger(parsed.repost_count) ? parsed.repost_count : null,
       };
     } catch {
-      return { id: null, title: "", updatedOn: "", createdOn: "", contentHash: "", repostCount: null };
+      return {
+        internalId: null,
+        id: null,
+        title: "",
+        updatedOn: "",
+        createdOn: "",
+        contentHash: "",
+        repostCount: null,
+      };
     }
   }
 
   const state = {
+    internalId: null,
     id: null,
     title: "",
     updatedOn: "",
@@ -1439,6 +1456,8 @@ function parseAdOperationState(text, filePath = "") {
     const value = stripYamlScalar(topLevel[2]);
     if (key === "id") {
       state.id = value || null;
+    } else if (key === INTERNAL_ID_KEY) {
+      state.internalId = parseInternalIdValue(value);
     } else if (key === "title") {
       state.title = value;
     } else if (key === "updated_on") {
@@ -1484,6 +1503,7 @@ async function readAdOperationSnapshots(adConfigPaths = [], config = {}) {
         path: adConfigPath,
         displayPath: path.basename(adConfigPath),
         exists: false,
+        internalId: null,
         id: null,
         title: "",
         updatedOn: "",
@@ -1590,8 +1610,10 @@ function summarizeAdSnapshotChanges(before = [], after = []) {
     if (changedFields.length) {
       changes.push({
         adPath: next.displayPath,
+        ...(next.internalId !== null ? { internalId: next.internalId } : {}),
         title: next.title || previous.title,
         id: next.id,
+        ...(changedFields.includes("id") && previous.id ? { previousId: previous.id } : {}),
         changedFields,
       });
     }
@@ -1902,9 +1924,17 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
     throw new Error("plugin config must set adRoots to list ads");
   }
   const query = normalizeOptionalString(params.query)?.toLowerCase();
+  const internalIdQuery = query?.startsWith("#") ? parseInternalIdValue(query.slice(1)) : null;
   const maxResults = normalizePositiveInteger(params.maxResults, 50, 1, 200);
   const resolvedRoots = await Promise.all(roots.map((root) => realPath(root)));
   const ads = [];
+  const listResult = async () => ({
+    ok: true,
+    operation: "list_ads",
+    count: ads.length,
+    ads,
+    ...internalIdOverview(await collectLocalAds(config)),
+  });
 
   for (const root of resolvedRoots) {
     for (const adConfigPath of await findAdFiles(root, { maxFiles: maxResults * 4 })) {
@@ -1915,6 +1945,7 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
       const haystack = [
         relDir,
         path.basename(directory),
+        summary.internalId === null ? "" : `#${summary.internalId}`,
         summary.id,
         summary.title,
         summary.category,
@@ -1922,7 +1953,7 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
-      if (query && !haystack.includes(query)) {
+      if (internalIdQuery !== null ? summary.internalId !== internalIdQuery : query && !haystack.includes(query)) {
         continue;
       }
       const negotiation = await readNegotiation(directory);
@@ -1934,12 +1965,12 @@ export async function listKleinanzeigenAds(config = {}, params = {}) {
         ...(negotiation ? { negotiation } : {}),
       });
       if (ads.length >= maxResults) {
-        return { ok: true, operation: "list_ads", count: ads.length, ads };
+        return listResult();
       }
     }
   }
 
-  return { ok: true, operation: "list_ads", count: ads.length, ads };
+  return listResult();
 }
 
 function categorySearchKey(value) {
@@ -2011,6 +2042,8 @@ export function getKleinanzeigenAdSchema() {
         condition_values: CONDITION_VALUES,
       },
       fields: {
+        internal_id: "stable local ad number, assigned by KleinClaw; never edit or reuse it",
+        id: "Kleinanzeigen ID, written by publish; changes on every republication",
         active: "false is safest for drafts; true allows scoped publish/update",
         type: "OFFER or WANTED",
         title: "10 to 65 characters",
@@ -2018,7 +2051,9 @@ export function getKleinanzeigenAdSchema() {
         category: "full display path (search with kleinanzeigen_categories), built-in category name, custom config mapping name, or category ID",
         price: "whole euros preferred; required when price_type is FIXED",
         price_type: "FIXED, NEGOTIABLE, GIVE_AWAY, or NOT_APPLICABLE",
-        images: "glob patterns relative to the ad config file",
+        images: "explicit file names in display order (first = cover); a glob such as " +
+          "*.jpg is sorted alphabetically. Set the order with kleinanzeigen_set_ad_images",
+        images_fingerprint: "written by KleinClaw to detect swapped image files; do not edit",
         special_attributes: "category-specific string key/value pairs",
         shipping_type: "PICKUP, SHIPPING, or NOT_APPLICABLE",
         shipping_costs: "numeric custom shipping cost",
@@ -2036,10 +2071,11 @@ export function getKleinanzeigenAdSchema() {
         price_type: "NEGOTIABLE",
         shipping_type: "PICKUP",
         sell_directly: false,
-        images: ["*.jpg"],
+        images: ["01-overview.jpg", "02-detail.jpg"],
       },
       workflow: [
         "use kleinanzeigen_images_list for candidate image filenames",
+        "draft_ad assigns the internal_id; tell it to the user",
         "use kleinanzeigen_draft_ad with active false to create a safe draft",
         "use scoped kleinanzeigen_verify on the draft directory",
         "use kleinanzeigen_set_ad_active with active true only when ready",
@@ -2057,8 +2093,12 @@ async function resolveSingleAdConfig(params = {}, config = {}) {
   const adDirectories = normalizeStringArray(params.adDirectories, "adDirectories", {
     maxItems: 1,
   });
-  if (adConfigPaths.length + adDirectories.length !== 1) {
-    throw new Error("provide exactly one adConfigPaths or adDirectories entry");
+  const internalIds = normalizeInternalIds(params.internalIds, { maxItems: 1 });
+  if (adConfigPaths.length + adDirectories.length + internalIds.length !== 1) {
+    throw new Error("provide exactly one internalIds, adConfigPaths or adDirectories entry");
+  }
+  if (internalIds.length) {
+    return (await resolveInternalIdScope(internalIds, config))[0];
   }
   if (adConfigPaths.length) {
     return resolveAdConfigPathEntry(adConfigPaths[0], config, {
@@ -2220,6 +2260,23 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
     }
     updates.push(["price_type", params.priceType]);
   }
+  const entryUpdates = [];
+  if (params.title !== undefined) {
+    const title = normalizeAdDraftString(params.title, "title", {
+      required: true,
+      maxLength: AD_TITLE_MAX_LENGTH,
+    });
+    if (title.length < AD_TITLE_MIN_LENGTH) {
+      throw new Error(`title length must be at least ${AD_TITLE_MIN_LENGTH} characters`);
+    }
+    entryUpdates.push(["title", title]);
+  }
+  if (params.description !== undefined) {
+    entryUpdates.push(["description", normalizeAdDraftString(params.description, "description", {
+      required: true,
+      maxLength: AD_DESCRIPTION_MAX_LENGTH,
+    })]);
+  }
   const sold = normalizeBoolean(params.sold, "sold");
   if (sold !== undefined) {
     updates.push(["sold", sold ? "true" : "false"]);
@@ -2228,9 +2285,10 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
       updates.push(["active", "false"]);
     }
   }
-  if (!updates.length && publishedAdId === null && negotiation === null) {
+  if (!updates.length && !entryUpdates.length && publishedAdId === null && negotiation === null) {
     throw new Error(
-      "set at least one of price, priceType, sold, publishedAdId, minPrice, negotiationNotes",
+      "set at least one of title, description, price, priceType, sold, publishedAdId, " +
+        "minPrice, negotiationNotes",
     );
   }
 
@@ -2251,9 +2309,12 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
       updates.push(["created_on", publishedOn]);
     }
   }
-  const afterText = updates.reduce(
-    (text, [key, value]) => setYamlTopLevelScalar(text, key, value),
-    beforeText,
+  const afterText = entryUpdates.reduce(
+    (text, [key, value]) => replaceTopLevelYamlEntry(text, key, yamlLinesForEntry(key, value)),
+    updates.reduce(
+      (text, [key, value]) => setYamlTopLevelScalar(text, key, value),
+      beforeText,
+    ),
   );
   const afterSummary = parseAdSummary(afterText);
   const askingPrice = Number(afterSummary.price);
@@ -2277,7 +2338,8 @@ export async function setKleinanzeigenAdFields(params = {}, config = {}, { now =
     previous: parseAdSummary(beforeText),
     summary: afterSummary,
     negotiation: negotiationResult,
-    nextActions: negotiation !== null && !updates.length && publishedAdId === null
+    nextActions: negotiation !== null && !updates.length && !entryUpdates.length &&
+      publishedAdId === null
       ? ["negotiation settings are local only; nothing to publish"]
       : sold
       ? ["the ad is sold and no longer eligible for publish/update"]
@@ -2477,20 +2539,34 @@ export async function draftKleinanzeigenAd(params = {}, config = {}) {
   const overwrite = normalizeBoolean(params.overwrite, "overwrite") ?? false;
   const { directory, root } = await resolveWritableAdDirectory(params.directory, config);
   const ad = normalizeDraftAd(params);
-  const yaml = renderAdYaml(ad);
   await fs.mkdir(directory, { recursive: true });
   const adConfigPath = path.join(directory, fileName);
-  if (!overwrite) {
-    try {
-      await fs.stat(adConfigPath);
-      throw new Error("ad draft already exists; set overwrite true to replace it");
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
+  let existingText = null;
+  try {
+    existingText = await fs.readFile(adConfigPath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  if (existingText !== null && !overwrite) {
+    throw new Error("ad draft already exists; set overwrite true to replace it");
+  }
+
+  // Overwriting must not lose the internal ID or the Kleinanzeigen ID and
+  // publication state; otherwise the next publish would create a duplicate.
+  const preserved = topLevelRawScalars(existingText ?? "", PRESERVED_DRAFT_KEYS);
+  if (!preserved.has(INTERNAL_ID_KEY)) {
+    preserved.set(INTERNAL_ID_KEY, String(nextFreeInternalId(await collectLocalAds(config))));
+  }
+  let yaml = renderAdYaml(ad);
+  for (const key of [...PRESERVED_DRAFT_KEYS].reverse()) {
+    if (preserved.has(key)) {
+      yaml = setYamlTopLevelScalar(yaml, key, preserved.get(key));
     }
   }
   await fs.writeFile(adConfigPath, yaml, { encoding: "utf8", mode: 0o600 });
+  const draftSummary = parseAdSummary(yaml);
 
   return {
     ok: true,
@@ -2499,8 +2575,11 @@ export async function draftKleinanzeigenAd(params = {}, config = {}) {
     adDirectory: displayPathForAd(directory, root),
     adPath: displayPathForAd(adConfigPath, root),
     active: ad.active,
-    summary: parseAdSummary(yaml),
+    internalId: draftSummary.internalId,
+    preservedKeys: [...preserved.keys()].filter((key) => existingText !== null || key !== INTERNAL_ID_KEY),
+    summary: draftSummary,
     nextActions: [
+      `tell the user the internal ID ${draftSummary.internalId} of this ad`,
       "review the draft yaml",
       "run scoped kleinanzeigen_verify on this directory",
       "set active true only when ready to publish",
@@ -2577,7 +2656,8 @@ function buildNextActions(diagnostics = [], scoped) {
 async function resolveScopedAdConfigPaths(params = {}, config = {}) {
   const adConfigPaths = normalizeStringArray(params.adConfigPaths, "adConfigPaths");
   const adDirectories = normalizeStringArray(params.adDirectories, "adDirectories");
-  if (!adConfigPaths.length && !adDirectories.length) {
+  const internalIds = normalizeInternalIds(params.internalIds);
+  if (!adConfigPaths.length && !adDirectories.length && !internalIds.length) {
     return [];
   }
 
@@ -2592,6 +2672,7 @@ async function resolveScopedAdConfigPaths(params = {}, config = {}) {
       kind: "directory",
     }));
   }
+  resolved.push(...await resolveInternalIdScope(internalIds, config));
   return [...new Set(resolved)];
 }
 
@@ -3343,10 +3424,859 @@ export async function sendKleinanzeigenMessage(params = {}, config = {}) {
   };
 }
 
-export async function runKleinanzeigenOperation(operation, params = {}, config = {}) {
+// ---------------------------------------------------------------------------
+// Internal ad IDs, image order, image fingerprints, and online sync checks.
+//
+// Kleinanzeigen assigns a new ad ID on every republication. `internal_id` in
+// ad.yaml is the stable local reference that the user and the agent use;
+// the Kleinanzeigen ID (`id`) is looked up from it whenever needed.
+// ---------------------------------------------------------------------------
+
+const INTERNAL_ID_KEY = "internal_id";
+const IMAGES_FINGERPRINT_KEY = "images_fingerprint";
+const INTERNAL_ID_RE = /^#?(\d{1,9})$/;
+const MAX_INTERNAL_ID_SCOPE = 20;
+const MAX_AD_IMAGES = 20;
+const GLOB_MAGIC_RE = /[*?[\]{}()!]/;
+const PRESERVED_DRAFT_KEYS = [
+  INTERNAL_ID_KEY,
+  "id",
+  "created_on",
+  "updated_on",
+  "content_hash",
+  "repost_count",
+  "price_reduction_count",
+  "sold",
+  "sold_on",
+  IMAGES_FINGERPRINT_KEY,
+];
+const SYNC_CORE_FIELDS = ["title", "description", "category", "price", "price_type"];
+const SYNC_OPTIONAL_FIELDS = [
+  "type",
+  "shipping_type",
+  "shipping_costs",
+  "shipping_options",
+  "sell_directly",
+  "special_attributes",
+];
+const SYNC_FIELDS = [...SYNC_CORE_FIELDS, ...SYNC_OPTIONAL_FIELDS];
+
+function isYamlAdFile(filePath) {
+  return [".yaml", ".yml"].includes(path.extname(filePath).toLowerCase());
+}
+
+function parseInternalIdValue(value) {
+  const match = /^\d{1,9}$/.exec(String(value ?? "").trim());
+  if (!match) {
+    return null;
+  }
+  const id = Number(match[0]);
+  return id >= 1 ? id : null;
+}
+
+function normalizeInternalIds(value, { maxItems = MAX_INTERNAL_ID_SCOPE } = {}) {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("internalIds must be an array");
+  }
+  const ids = value.map((entry) => {
+    const match = INTERNAL_ID_RE.exec(String(entry).trim());
+    const id = match ? Number(match[1]) : Number.NaN;
+    if (!Number.isSafeInteger(id) || id < 1) {
+      throw new Error("internalIds may contain only positive whole numbers");
+    }
+    return id;
+  });
+  if (!ids.length) {
+    throw new Error("internalIds must not be empty");
+  }
+  const unique = [...new Set(ids)];
+  if (unique.length > maxItems) {
+    throw new Error(`internalIds must contain at most ${maxItems} entries`);
+  }
+  return unique;
+}
+
+async function collectLocalAds(config = {}) {
+  const roots = await configuredAdRoots(config);
+  const ads = [];
+  const seen = new Set();
+  for (const root of roots) {
+    for (const adConfigPath of await findAdFiles(root, { maxFiles: 1000 })) {
+      const resolved = await realPath(adConfigPath);
+      if (seen.has(resolved)) {
+        continue;
+      }
+      seen.add(resolved);
+      const text = await fs.readFile(resolved, "utf8");
+      ads.push({ adConfigPath: resolved, root, text, summary: parseAdSummary(text) });
+    }
+  }
+  return ads;
+}
+
+function localAdReference(ad, extra = {}) {
+  return {
+    ...extra,
+    internalId: ad.summary.internalId,
+    kleinanzeigenId: ad.summary.id,
+    title: ad.summary.title,
+    adDirectory: displayPathForAd(path.dirname(ad.adConfigPath), ad.root),
+    active: ad.summary.active,
+    sold: ad.summary.sold,
+    price: ad.summary.price,
+    priceType: ad.summary.priceType,
+    images: ad.summary.imageGlobs.length,
+  };
+}
+
+function internalIdIndex(ads) {
+  const byId = new Map();
+  for (const ad of ads) {
+    const id = ad.summary.internalId;
+    if (id === null) {
+      continue;
+    }
+    if (!byId.has(id)) {
+      byId.set(id, []);
+    }
+    byId.get(id).push(ad);
+  }
+  return byId;
+}
+
+function nextFreeInternalId(ads) {
+  return ads.reduce((max, ad) => Math.max(max, ad.summary.internalId ?? 0), 0) + 1;
+}
+
+function internalIdOverview(ads) {
+  const duplicates = [...internalIdIndex(ads).entries()]
+    .filter(([, entries]) => entries.length > 1)
+    .map(([internalId, entries]) => ({
+      internalId,
+      ads: entries.map((ad) => localAdReference(ad)),
+    }));
+  return {
+    adsWithoutInternalId: ads.filter((ad) => ad.summary.internalId === null).length,
+    internalIdDuplicates: duplicates,
+    nextFreeInternalId: nextFreeInternalId(ads),
+  };
+}
+
+async function resolveInternalIdScope(internalIds, config = {}) {
+  if (!internalIds.length) {
+    return [];
+  }
+  const byId = internalIdIndex(await collectLocalAds(config));
+  return internalIds.map((id) => {
+    const matches = byId.get(id) ?? [];
+    if (!matches.length) {
+      throw new Error(`internal ID ${id} was not found under adRoots`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `internal ID ${id} is used by ${matches.length} ads; ` +
+          "resolve the duplicate first (kleinanzeigen_list_ads lists them)",
+      );
+    }
+    return matches[0].adConfigPath;
+  });
+}
+
+const KLEINANZEIGEN_ID_OPERATIONS = new Set(["delete", "download"]);
+
+/** delete and download address live ads by Kleinanzeigen ID; map internal IDs to those. */
+async function withKleinanzeigenIdsFromInternalIds(operation, params, config) {
+  if (!KLEINANZEIGEN_ID_OPERATIONS.has(operation) || params.internalIds === undefined) {
+    return params;
+  }
+  if (params.adIds !== undefined) {
+    throw new Error("internalIds cannot be combined with adIds");
+  }
+  const internalIds = normalizeInternalIds(params.internalIds);
+  const adConfigPaths = await resolveInternalIdScope(internalIds, config);
+  const adIds = [];
+  for (const [index, adConfigPath] of adConfigPaths.entries()) {
+    const summary = parseAdSummary(await fs.readFile(adConfigPath, "utf8"));
+    if (!summary.id) {
+      throw new Error(
+        `internal ID ${internalIds[index]} has no Kleinanzeigen ID (never published)`,
+      );
+    }
+    adIds.push(String(summary.id));
+  }
+  const { internalIds: _internalIds, ...rest } = params;
+  return { ...rest, adIds };
+}
+
+/** Replaces or appends one top-level YAML entry (scalar, block scalar, list or map). */
+function replaceTopLevelYamlEntry(text, key, entryLines) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const section = findTopLevelYamlSection(lines, key);
+  const next = [...lines];
+  if (!section) {
+    let insertAt = next.length;
+    while (insertAt > 0 && next[insertAt - 1] === "") {
+      insertAt -= 1;
+    }
+    next.splice(insertAt, 0, ...entryLines);
+    return next.join("\n");
+  }
+  // Keep blank lines and column-0 comments that precede the next key.
+  let end = section.end;
+  while (end > section.start + 1 && /^(#.*)?$/.test(lines[end - 1])) {
+    end -= 1;
+  }
+  next.splice(section.start, end - section.start, ...entryLines);
+  return next.join("\n");
+}
+
+function topLevelRawScalars(text, keys) {
+  const values = new Map();
+  for (const line of String(text ?? "").replace(/\r\n/g, "\n").split("\n")) {
+    const match = /^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)$/.exec(line);
+    if (match && keys.includes(match[1]) && match[2].trim() !== "") {
+      values.set(match[1], match[2].trim());
+    }
+  }
+  return values;
+}
+
+async function loadMiniclawHashing() {
+  const module = await import(
+    new URL("../miniclaw/dist/index.js", import.meta.url).href
+  );
+  return { contentHashForAd: module.contentHashForAd, loadDataFile: module.loadDataFile };
+}
+
+async function resolveAdImageFiles(adConfigPath, imageGlobs) {
+  // Mirrors miniclaw: patterns keep their order, matches of one pattern are sorted.
+  const { glob } = await import("glob");
+  const adDir = path.dirname(adConfigPath);
+  const files = [];
+  for (const pattern of imageGlobs) {
+    const matches = await glob(pattern, { cwd: adDir, nodir: true });
+    files.push(...[...new Set(matches.map((match) => path.resolve(adDir, match)))].sort());
+  }
+  return [...new Set(files)];
+}
+
+async function computeImagesFingerprint(adConfigPath, imageGlobs) {
+  const adDir = path.dirname(adConfigPath);
+  const files = await resolveAdImageFiles(adConfigPath, imageGlobs);
+  if (!files.length) {
+    return { fingerprint: null, count: 0 };
+  }
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(path.relative(adDir, file).split(path.sep).join("/"));
+    hash.update("\0");
+    hash.update(await fs.readFile(file));
+    hash.update("\0");
+  }
+  return { fingerprint: hash.digest("hex").slice(0, 32), count: files.length };
+}
+
+async function writeContentHash(adConfigPath, hashing) {
+  const contentHash = hashing.contentHashForAd(await hashing.loadDataFile(adConfigPath));
+  const text = await fs.readFile(adConfigPath, "utf8");
+  await fs.writeFile(
+    adConfigPath,
+    setYamlTopLevelScalar(text, "content_hash", quoteYamlScalar(contentHash)),
+    "utf8",
+  );
+}
+
+/**
+ * The miniclaw content hash only covers ad.yaml, so swapped image files with
+ * unchanged names would never count as "changed". Storing a fingerprint of the
+ * image files in ad.yaml makes such swaps visible to the changed selector.
+ */
+async function refreshImageFingerprints(adConfigPaths, config = {}) {
+  let roots;
+  try {
+    roots = await configuredAdRoots(config);
+  } catch {
+    return [];
+  }
+  const changes = [];
+  let hashing = null;
+  for (const adConfigPath of adConfigPaths) {
+    if (!isYamlAdFile(adConfigPath) || !roots.some((root) => pathIsInside(adConfigPath, root))) {
+      continue;
+    }
+    let text;
+    try {
+      text = await fs.readFile(adConfigPath, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    const summary = parseAdSummary(text);
+    if (!summary.imageGlobs.length) {
+      continue;
+    }
+    let current;
+    try {
+      current = await computeImagesFingerprint(adConfigPath, summary.imageGlobs);
+    } catch {
+      continue;
+    }
+    if (!current.fingerprint || current.fingerprint === summary.imagesFingerprint) {
+      continue;
+    }
+
+    const contentHash = parseAdOperationState(text, adConfigPath).contentHash;
+    let baseline = false;
+    if (summary.imagesFingerprint === null && contentHash) {
+      hashing ??= await loadMiniclawHashing();
+      baseline =
+        hashing.contentHashForAd(await hashing.loadDataFile(adConfigPath)) === contentHash;
+    }
+    await fs.writeFile(
+      adConfigPath,
+      setYamlTopLevelScalar(text, IMAGES_FINGERPRINT_KEY, quoteYamlScalar(current.fingerprint)),
+      "utf8",
+    );
+    if (baseline) {
+      // First fingerprint of an unchanged ad: record it without flagging a change.
+      await writeContentHash(adConfigPath, hashing);
+      continue;
+    }
+    const root = roots.find((entry) => pathIsInside(adConfigPath, entry));
+    changes.push({
+      adPath: displayPathForAd(adConfigPath, root),
+      internalId: summary.internalId,
+      title: summary.title,
+      imageCount: current.count,
+    });
+  }
+  return changes;
+}
+
+export async function findKleinanzeigenAd(params = {}, config = {}) {
+  const ref = normalizeAdDraftString(params.ref, "ref", { required: true, maxLength: 200 });
+  const maxResults = normalizePositiveInteger(params.maxResults, 10, 1, 50);
+  const ads = await collectLocalAds(config);
+  const matches = [];
+  const numeric = /^#?(\d+)$/.exec(ref);
+  if (numeric) {
+    const value = numeric[1];
+    for (const ad of ads) {
+      if (ad.summary.internalId !== null && ad.summary.internalId === Number(value)) {
+        matches.push(localAdReference(ad, { matchedBy: "internal_id" }));
+      }
+      if (!ref.startsWith("#") && ad.summary.id && String(ad.summary.id) === value) {
+        matches.push(localAdReference(ad, { matchedBy: "kleinanzeigen_id" }));
+      }
+    }
+  }
+  if (!matches.length) {
+    const terms = categorySearchKey(ref).split(" ").filter(Boolean);
+    const exact = categorySearchKey(ref);
+    const titleMatches = ads
+      .filter((ad) => {
+        const haystack = categorySearchKey(
+          `${ad.summary.title} ${path.basename(path.dirname(ad.adConfigPath))}`,
+        );
+        return terms.length && terms.every((term) => haystack.includes(term));
+      })
+      .sort((left, right) =>
+        Number(categorySearchKey(right.summary.title) === exact) -
+          Number(categorySearchKey(left.summary.title) === exact) ||
+        (left.summary.internalId ?? Number.MAX_SAFE_INTEGER) -
+          (right.summary.internalId ?? Number.MAX_SAFE_INTEGER),
+      );
+    matches.push(...titleMatches.map((ad) => localAdReference(ad, { matchedBy: "title" })));
+  }
+
+  const limited = matches.slice(0, maxResults);
+  const withoutInternalId = limited.filter((match) => match.internalId === null).length;
+  return {
+    ok: true,
+    operation: "find_ad",
+    ref,
+    count: matches.length,
+    ambiguous: matches.length > 1,
+    matches: limited,
+    hint: matches.length === 0
+      ? "no local ad matches; check kleinanzeigen_list_ads"
+      : matches.length > 1
+        ? "several ads match; ask the user which internal ID is meant before changing anything"
+        : withoutInternalId
+          ? "this ad has no internal ID yet; run kleinanzeigen_assign_internal_ids"
+          : "use internalIds: [<internalId>] to scope further tool calls",
+    ...localSuccessProcessFields(),
+  };
+}
+
+export async function assignKleinanzeigenInternalIds(params = {}, config = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before assigning internal IDs");
+  }
+  const ads = await collectLocalAds(config);
+  const missing = ads
+    .filter((ad) => ad.summary.internalId === null && isYamlAdFile(ad.adConfigPath))
+    .sort((left, right) =>
+      (left.summary.createdOn ?? "9999").localeCompare(right.summary.createdOn ?? "9999") ||
+      left.adConfigPath.localeCompare(right.adConfigPath),
+    );
+  let nextId = nextFreeInternalId(ads);
+  const assigned = [];
+  for (const ad of missing) {
+    const internalId = nextId;
+    nextId += 1;
+    const text = setYamlTopLevelScalar(ad.text, INTERNAL_ID_KEY, String(internalId));
+    await fs.writeFile(ad.adConfigPath, text, "utf8");
+    assigned.push(localAdReference({ ...ad, summary: parseAdSummary(text) }));
+  }
+  const overview = internalIdOverview(await collectLocalAds(config));
+
+  return {
+    ok: true,
+    operation: "assign_internal_ids",
+    changed: assigned.length > 0,
+    assigned,
+    skippedNonYaml: ads.filter((ad) => !isYamlAdFile(ad.adConfigPath)).length,
+    internalIdDuplicates: overview.internalIdDuplicates,
+    nextFreeInternalId: overview.nextFreeInternalId,
+    nextActions: overview.internalIdDuplicates.length
+      ? ["show the duplicate internal IDs to the user and ask how to renumber them"]
+      : ["tell the user the internal ID of each ad; use internalIds for further calls"],
+    ...localSuccessProcessFields(),
+  };
+}
+
+function sanitizeImageFileName(name) {
+  const extension = path.extname(name);
+  const stem = path.basename(name, extension).replace(/[*?[\]{}()!]/g, "_").trim() || "image";
+  return `${stem}${extension.toLowerCase()}`;
+}
+
+async function sameFileContent(left, right) {
+  const [leftStat, rightStat] = await Promise.all([fs.stat(left), fs.stat(right)]);
+  if (leftStat.size !== rightStat.size) {
+    return false;
+  }
+  const [leftBuffer, rightBuffer] = await Promise.all([fs.readFile(left), fs.readFile(right)]);
+  return leftBuffer.equals(rightBuffer);
+}
+
+async function copyImageIntoAdDirectory(source, adDir, preferredName) {
+  const name = sanitizeImageFileName(preferredName);
+  const extension = path.extname(name);
+  const stem = path.basename(name, extension);
+  for (let attempt = 1; attempt < 1000; attempt += 1) {
+    const candidateName = attempt === 1 ? name : `${stem}-${attempt}${extension}`;
+    const candidate = path.join(adDir, candidateName);
+    try {
+      await fs.stat(candidate);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+      await fs.copyFile(source, candidate, fsConstants.COPYFILE_EXCL);
+      return { name: candidateName, copied: true };
+    }
+    if (await sameFileContent(source, candidate)) {
+      return { name: candidateName, copied: false };
+    }
+  }
+  throw new Error("could not find a free image file name in the ad directory");
+}
+
+async function resolveImageSource(entry, index, adDir, roots) {
+  const raw = normalizeAdDraftString(entry, `images[${index}]`, { required: true });
+  const candidates = path.isAbsolute(raw)
+    ? [path.resolve(raw)]
+    : [path.resolve(adDir, raw), ...roots.map((root) => path.resolve(root, raw))];
+  for (const candidate of candidates) {
+    let resolved;
+    try {
+      resolved = await realPath(candidate);
+    } catch (error) {
+      if (["ENOENT", "ENOTDIR"].includes(error?.code)) {
+        continue;
+      }
+      throw error;
+    }
+    if (!roots.some((root) => pathIsInside(resolved, root))) {
+      throw new Error(`images[${index}] must be inside configured adRoots`);
+    }
+    if (!(await fs.stat(resolved)).isFile()) {
+      throw new Error(`images[${index}] is not a file`);
+    }
+    if (!SUPPORTED_IMAGE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
+      throw new Error(
+        `images[${index}] must be .jpg, .jpeg, .png or .gif; convert other formats first`,
+      );
+    }
+    return resolved;
+  }
+  throw new Error(`images[${index}] was not found in the ad directory or adRoots`);
+}
+
+async function unlistedAdImages(adDir, listed) {
+  const entries = await fs.readdir(adDir, { withFileTypes: true });
+  return entries
+    .filter((entry) =>
+      entry.isFile() &&
+      IMAGE_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) &&
+      !listed.includes(entry.name),
+    )
+    .map((entry) => entry.name)
+    .sort();
+}
+
+export async function setKleinanzeigenAdImages(params = {}, config = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before changing ad images");
+  }
+  const requested = normalizeStringArray(params.images, "images", { maxItems: MAX_AD_IMAGES });
+  if (!requested.length) {
+    throw new Error("images is required: the image files in display order");
+  }
+  const adConfigPath = await resolveSingleAdConfig(params, config);
+  if (!isYamlAdFile(adConfigPath)) {
+    throw new Error("set_ad_images currently supports only YAML ad configs");
+  }
+  const roots = await configuredAdRoots(config);
+  const root = roots.find((entry) => pathIsInside(adConfigPath, entry)) ?? path.dirname(adConfigPath);
+  const adDir = path.dirname(adConfigPath);
+
+  const sources = [];
+  for (const [index, entry] of requested.entries()) {
+    sources.push(await resolveImageSource(entry, index, adDir, roots));
+  }
+  if (new Set(sources).size !== sources.length) {
+    throw new Error("images lists the same file twice");
+  }
+
+  const images = [];
+  const copied = [];
+  for (const source of sources) {
+    if (pathIsInside(source, adDir)) {
+      const relative = path.relative(adDir, source).split(path.sep).join("/");
+      if (GLOB_MAGIC_RE.test(relative)) {
+        throw new Error(
+          "an image file name contains glob characters (*?[]{}()!); rename it first",
+        );
+      }
+      images.push(relative);
+      continue;
+    }
+    const target = await copyImageIntoAdDirectory(source, adDir, path.basename(source));
+    images.push(target.name);
+    if (target.copied) {
+      const sourceRoot = roots.find((entry) => pathIsInside(source, entry)) ?? path.dirname(source);
+      copied.push({ from: displayPathForAd(source, sourceRoot), to: target.name });
+    }
+  }
+
+  const beforeText = await fs.readFile(adConfigPath, "utf8");
+  const before = parseAdSummary(beforeText);
+  const afterText = replaceTopLevelYamlEntry(
+    beforeText,
+    "images",
+    yamlLinesForEntry("images", images),
+  );
+  const changed = afterText !== beforeText;
+  if (changed) {
+    await fs.writeFile(adConfigPath, afterText, "utf8");
+  }
+
+  return {
+    ok: true,
+    operation: "set_ad_images",
+    changed: changed || copied.length > 0,
+    adPath: displayPathForAd(adConfigPath, root),
+    internalId: before.internalId,
+    kleinanzeigenId: before.id,
+    title: before.title,
+    previousImages: before.imageGlobs,
+    images,
+    copied,
+    unlistedImages: await unlistedAdImages(adDir, images),
+    nextActions: before.id
+      ? ["run scoped kleinanzeigen_verify, then kleinanzeigen_update scoped to this ad"]
+      : ["run scoped kleinanzeigen_verify on this ad"],
+    ...localSuccessProcessFields(),
+  };
+}
+
+function normalizeSyncText(value) {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
+}
+
+function syncComparable(field, value, local, builtinCategories) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (field === "title") {
+    return normalizeSyncText(value);
+  }
+  if (field === "description") {
+    let text = String(value).trim();
+    const prefix = String(local.description_prefix ?? "").trim();
+    const suffix = String(local.description_suffix ?? "").trim();
+    if (prefix && text.startsWith(prefix)) {
+      text = text.slice(prefix.length);
+    }
+    if (suffix && text.endsWith(suffix)) {
+      text = text.slice(0, -suffix.length);
+    }
+    return normalizeSyncText(text);
+  }
+  if (field === "category") {
+    const text = String(value).trim();
+    return builtinCategories[text] ?? text;
+  }
+  if (["price", "shipping_costs"].includes(field)) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : String(value);
+  }
+  if (Array.isArray(value)) {
+    return [...value].map(String).sort();
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined && entry !== null && entry !== "")
+        .map(([key, entry]) => [key, String(entry)])
+        .sort(([left], [right]) => left.localeCompare(right)),
+    );
+  }
+  return value;
+}
+
+function syncPreview(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > 300 ? `${text.slice(0, 297)}...` : text;
+}
+
+async function findDownloadedAdFile(directory, depth = 0) {
+  if (depth > 3) {
+    return null;
+  }
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isFile() && /\.ya?ml$/i.test(entry.name)) {
+      return path.join(directory, entry.name);
+    }
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory() && !entry.name.startsWith(".")) {
+      const found = await findDownloadedAdFile(path.join(directory, entry.name), depth + 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before opening the live browser for a sync check");
+  }
+  const apply = params.apply === undefined
+    ? []
+    : normalizeStringArray(params.apply, "apply", { maxItems: SYNC_FIELDS.length });
+  if (apply.some((field) => !SYNC_FIELDS.includes(field))) {
+    throw new Error(`apply must contain only: ${SYNC_FIELDS.join(", ")}`);
+  }
+  const applyImages = normalizeBoolean(params.applyImages, "applyImages") ?? false;
+
+  const adConfigPath = await resolveSingleAdConfig(params, config);
+  if (!isYamlAdFile(adConfigPath)) {
+    throw new Error("sync_check currently supports only YAML ad configs");
+  }
+  const roots = await configuredAdRoots(config);
+  const root = roots.find((entry) => pathIsInside(adConfigPath, entry)) ?? path.dirname(adConfigPath);
+  const adDir = path.dirname(adConfigPath);
+  const summary = parseAdSummary(await fs.readFile(adConfigPath, "utf8"));
+  if (!summary.id) {
+    throw new Error("the ad has no Kleinanzeigen ID yet; there is nothing online to compare");
+  }
+
+  const cliConfig = resolveCliConfig(config);
+  await assertConfiguredFiles(cliConfig);
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const downloadDir = path.join(path.dirname(cliConfig.configPath), `.kleinclaw-sync-${suffix}`);
+  await fs.mkdir(downloadDir, { recursive: true, mode: 0o700 });
+
+  try {
+    const args = buildKleinanzeigenArgs(
+      "download",
+      { confirm: true, adIds: [String(summary.id)] },
+      cliConfig,
+    );
+    args.push(`--download-dir=${downloadDir}`);
+    const result = await runRuntimeProcess(cliConfig.runtime, args, {
+      cwd: cliConfig.cwd,
+      timeoutMs: cliConfig.timeoutMs,
+      maxBufferChars: cliConfig.maxOutputChars,
+      env: buildChildEnv(),
+      commandRunner: cliConfig.commandRunner,
+    });
+    const rawText = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n");
+    const userAction = detectUserActionRequest(rawText);
+    const downloadedFile = await findDownloadedAdFile(downloadDir);
+    const base = {
+      operation: "sync_check",
+      adPath: displayPathForAd(adConfigPath, root),
+      internalId: summary.internalId,
+      kleinanzeigenId: summary.id,
+      title: summary.title,
+    };
+    if (!downloadedFile) {
+      const redactions = buildRedactions({ ...config, ...cliConfig });
+      return {
+        ok: false,
+        ...base,
+        processOk: result.ok,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        needsUserAction: userAction.needsUserAction,
+        ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
+        message: "the ad could not be downloaded; it may be offline, deleted, or the login failed",
+        stdout: sanitizeText(result.stdout, redactions, 2000),
+        stderr: sanitizeText(result.stderr, redactions, 2000),
+      };
+    }
+
+    const hashing = await loadMiniclawHashing();
+    const { BUILTIN_CATEGORIES } = await import(
+      new URL("../miniclaw/dist/resources/categories.js", import.meta.url).href
+    );
+    const online = (await hashing.loadDataFile(downloadedFile)) ?? {};
+    const local = (await hashing.loadDataFile(adConfigPath)) ?? {};
+
+    const differences = [];
+    for (const field of SYNC_FIELDS) {
+      if (!SYNC_CORE_FIELDS.includes(field) && local[field] === undefined) {
+        continue; // Not set locally: config defaults apply, no meaningful comparison.
+      }
+      const localValue = syncComparable(field, local[field], local, BUILTIN_CATEGORIES);
+      const onlineValue = syncComparable(field, online[field], local, BUILTIN_CATEGORIES);
+      if (JSON.stringify(localValue) !== JSON.stringify(onlineValue)) {
+        differences.push({
+          field,
+          local: syncPreview(local[field]),
+          online: syncPreview(online[field]),
+        });
+      }
+    }
+
+    const localImages = await resolveAdImageFiles(adConfigPath, summary.imageGlobs).catch(() => []);
+    const onlineImages = Array.isArray(online.images) ? online.images.map(String) : [];
+    const imageCountDiffers = localImages.length !== onlineImages.length;
+
+    let afterText = await fs.readFile(adConfigPath, "utf8");
+    const applied = [];
+    for (const field of apply) {
+      if (!differences.some((entry) => entry.field === field) || online[field] === undefined) {
+        continue;
+      }
+      afterText = replaceTopLevelYamlEntry(
+        afterText,
+        field,
+        yamlLinesForEntry(field, online[field]),
+      );
+      applied.push(field);
+    }
+
+    const importedImages = [];
+    if (applyImages && onlineImages.length) {
+      const downloadedDir = path.dirname(downloadedFile);
+      for (const [index, image] of onlineImages.entries()) {
+        const source = path.resolve(downloadedDir, image);
+        if (!pathIsInside(source, downloadDir)) {
+          continue;
+        }
+        const extension = path.extname(source).toLowerCase() || ".jpg";
+        const target = await copyImageIntoAdDirectory(
+          source,
+          adDir,
+          `online-${String(index + 1).padStart(2, "0")}${extension}`,
+        );
+        importedImages.push(target.name);
+      }
+      if (importedImages.length) {
+        afterText = replaceTopLevelYamlEntry(
+          afterText,
+          "images",
+          yamlLinesForEntry("images", importedImages),
+        );
+      }
+    }
+
+    const changed = applied.length > 0 || importedImages.length > 0;
+    const remaining = differences.filter((entry) => !applied.includes(entry.field));
+    const imagesInSync = !imageCountDiffers || importedImages.length > 0;
+    const inSync = remaining.length === 0 && imagesInSync;
+    if (changed) {
+      await fs.writeFile(adConfigPath, afterText, "utf8");
+      if (inSync) {
+        // Local now equals the live ad: store hashes so update does not resend it.
+        const images = parseAdSummary(afterText).imageGlobs;
+        const { fingerprint } = await computeImagesFingerprint(adConfigPath, images);
+        if (fingerprint) {
+          const text = await fs.readFile(adConfigPath, "utf8");
+          await fs.writeFile(
+            adConfigPath,
+            setYamlTopLevelScalar(text, IMAGES_FINGERPRINT_KEY, quoteYamlScalar(fingerprint)),
+            "utf8",
+          );
+        }
+        await writeContentHash(adConfigPath, hashing);
+      }
+    }
+
+    return {
+      ok: true,
+      ...base,
+      inSync: differences.length === 0 && !imageCountDiffers,
+      differences,
+      images: {
+        local: localImages.length,
+        online: onlineImages.length,
+        countDiffers: imageCountDiffers,
+        note: "online images are re-encoded by Kleinanzeigen, so only the count is compared",
+      },
+      applied,
+      importedImages,
+      changed,
+      nextActions: !changed
+        ? differences.length || imageCountDiffers
+          ? [
+              "show the differences to the user",
+              "to keep the online version: call again with apply (and applyImages)",
+              "to keep the local version: run kleinanzeigen_update scoped to this ad",
+            ]
+          : ["local ad and online ad match"]
+        : inSync
+          ? ["local ad now matches the online ad"]
+          : ["remaining local differences will be sent by the next scoped kleinanzeigen_update"],
+      ...localSuccessProcessFields(),
+    };
+  } finally {
+    await fs.rm(downloadDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function runKleinanzeigenOperation(operation, requestParams = {}, config = {}) {
   const baseCliConfig = resolveCliConfig(config);
   await assertConfiguredFiles(baseCliConfig);
-  requireConfirmed(operation, params);
+  requireConfirmed(operation, requestParams);
+  const params = await withKleinanzeigenIdsFromInternalIds(operation, requestParams, config);
   const requestedScopedAdConfigPaths = await resolveScopedAdConfigPaths(params, config);
   const adIdScopedAdConfigPaths = requestedScopedAdConfigPaths.length
     ? []
@@ -3375,6 +4305,9 @@ export async function runKleinanzeigenOperation(operation, params = {}, config =
     scopedAdConfigPaths.length > 0
       ? scopedAdConfigPaths
       : await readConfiguredAdFiles(baseCliConfig.configPath);
+  const imageChanges = ["publish", "update"].includes(operation) && params.fillOnly !== true
+    ? await refreshImageFingerprints(snapshotPaths, config)
+    : [];
   const beforeSnapshots = await readAdOperationSnapshots(snapshotPaths, config);
   const cliConfig = scopedAdConfigPaths.length > 0
     ? { ...baseCliConfig, adFileOverrides: scopedAdConfigPaths }
@@ -3431,6 +4364,7 @@ export async function runKleinanzeigenOperation(operation, params = {}, config =
     needsUserAction: userAction.needsUserAction,
     ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
     ...(diagnostics.length ? { diagnostics, nextActions } : {}),
+    ...(imageChanges.length ? { imageChanges } : {}),
     stdout,
     stderr,
   };

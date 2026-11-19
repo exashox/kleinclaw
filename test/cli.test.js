@@ -1825,7 +1825,7 @@ describe("ad field changes", () => {
 
     await assert.rejects(
       setKleinanzeigenAdFields({ confirm: true, adDirectories: [adDir] }, { adRoots: [tmp] }),
-      /set at least one of price, priceType, sold, publishedAdId/,
+      /set at least one of title, description, price, priceType, sold, publishedAdId/,
     );
 
     // A hand-submitted ad without ID/dates must not count as due afterwards.

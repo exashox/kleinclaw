@@ -36,7 +36,7 @@ export class PublishingConfig {
     }
     this.deleteOldAds = deleteOldAds;
     this.deleteOldAdsByTitle =
-      input.deleteOldAdsByTitle ?? input.delete_old_ads_by_title ?? true;
+      input.deleteOldAdsByTitle ?? input.delete_old_ads_by_title ?? false;
   }
 }
 

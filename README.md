@@ -43,7 +43,8 @@ workflow, the agent drives the tools.
 ### Workflow
 
 - Check setup, config wiring, and browser readiness before a live run.
-- Discover listing folders inside configured `adRoots`.
+- Discover listing folders inside configured `adRoots` and address each ad by
+  a stable internal ID.
 - Draft inactive local ads from user-provided text and local image filenames.
 - Verify one listing folder or the full miniclaw workspace before changes.
 - Publish or republish, update, delete explicit IDs, download listings, and
@@ -364,7 +365,67 @@ Use `kleinanzeigen_set_ad_fields` to change `price` or `priceType` of one ad, or
 to mark it sold. `sold: true` writes `sold: true`, `sold_on`, and
 `active: false`, so neither publish nor the `due` republication picks it up
 again. `kleinanzeigen_list_ads` returns `priceType`, `createdOn`, `updatedOn`,
-`republicationInterval`, `sold`, and `soldOn` for reports.
+`republicationInterval`, `sold`, and `soldOn` for reports. It also changes
+`title` and `description` (local only; run a scoped `kleinanzeigen_update`
+afterwards to change the live ad).
+
+#### Internal IDs
+
+Kleinanzeigen assigns a new ad ID on every republication, so that ID is a poor
+handle for "the bike ad". KleinClaw keeps a stable `internal_id` (a small
+number) in each `ad.yaml`:
+
+- `kleinanzeigen_draft_ad` assigns the next free internal ID to a new draft and
+  keeps `internal_id`, `id`, `created_on`, `content_hash`, and the other
+  publication fields when a draft is overwritten, so an overwrite never turns a
+  published ad into a duplicate.
+- `kleinanzeigen_assign_internal_ids` numbers all existing YAML ads that have
+  none yet (oldest first). Existing internal IDs are never changed.
+- `kleinanzeigen_find_ad` resolves what the user says (`#12`, `12`, a
+  Kleinanzeigen ID, or title words) to matching ads with internal ID,
+  Kleinanzeigen ID, title, and folder. Several matches are flagged as
+  `ambiguous`.
+- Every ad-scoped tool accepts `internalIds` as scope. delete and download map
+  them to the current Kleinanzeigen IDs.
+- `kleinanzeigen_list_ads` returns `internalId`, `adsWithoutInternalId`,
+  `internalIdDuplicates`, and `nextFreeInternalId`; `query: "#12"` matches
+  one internal ID exactly.
+
+`internal_id` is not part of the miniclaw content hash, so adding it never
+marks an ad as changed.
+
+#### Image order
+
+`kleinanzeigen_set_ad_images` writes the `images` list of one ad in the given
+order; the first image is the cover. Files from elsewhere under `adRoots` (for
+example an `inbox` folder) are copied into the ad folder. Files that are no
+longer listed stay on disk and are returned as `unlistedImages`. A glob such as
+`*.jpg` sorts alphabetically, so explicit file names are the reliable way to
+control the order.
+
+Before publish and update, KleinClaw stores an `images_fingerprint` of the
+image files in `ad.yaml`. Replacing a photo under the same file name therefore
+makes the ad count as `changed`, which the miniclaw content hash alone would
+miss. The first fingerprint of an otherwise unchanged ad is recorded silently.
+
+#### Comparing with the live ad
+
+`kleinanzeigen_sync_check` downloads one published ad into a temporary folder
+next to the miniclaw config, compares title, description, category, price,
+shipping, special attributes, and the image count with the local `ad.yaml`,
+and deletes the temporary folder again. Use it after editing an ad on
+kleinanzeigen.de by hand. `apply` takes over selected online fields,
+`applyImages` replaces the local image list with the online images
+(`online-NN.jpg`). When everything is taken over, the content hash is updated so
+the next `update` does not resend the same content. The check opens the live
+browser but changes nothing on Kleinanzeigen.
+
+#### Republication and title matches
+
+miniclaw used to delete every online ad with the same title when it
+republished an ad. KleinClaw now defaults `publishing.delete_old_ads_by_title`
+to `false`, so only the ad with the stored `id` is replaced. Set it to `true`
+in the miniclaw config only if you never sell two items with the same title.
 
 Recommended loop:
 
@@ -588,7 +649,10 @@ Operation tool fields:
   `all`; update accepts `changed` or `all`; download accepts `new` or `all`;
   extend accepts `all`.
 - `selectors`: publish-only list for combinations such as `["changed", "due"]`.
-- `adIds`: explicit numeric Kleinanzeigen IDs. Required for delete.
+- `internalIds`: stable internal ad IDs (`internal_id` in `ad.yaml`) used to
+  scope the run. Preferred over folders and Kleinanzeigen IDs.
+- `adIds`: explicit numeric Kleinanzeigen IDs. Delete needs `adIds` or
+  `internalIds`.
 - `adDirectories`: ad folders under `adRoots` used to scope the run.
 - `adConfigPaths`: exact ad YAML/JSON files under `adRoots` used to scope the
   run.

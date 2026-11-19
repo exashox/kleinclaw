@@ -1,10 +1,12 @@
 import path from "node:path";
 
 import {
+  assignKleinanzeigenInternalIds,
   buildRedactions,
   checkKleinanzeigenBrowser,
   configureKleinanzeigenBrowser,
   draftKleinanzeigenAd,
+  findKleinanzeigenAd,
   getKleinanzeigenAdSchema,
   getKleinanzeigenBrowserStatus,
   getKleinanzeigenStatus,
@@ -19,6 +21,8 @@ import {
   sendKleinanzeigenMessage,
   setKleinanzeigenAdActive,
   setKleinanzeigenAdFields,
+  setKleinanzeigenAdImages,
+  syncCheckKleinanzeigenAd,
 } from "./cli.js";
 
 export const SIDE_EFFECT_TOOL_NAMES = new Set([
@@ -31,6 +35,9 @@ export const SIDE_EFFECT_TOOL_NAMES = new Set([
   "kleinanzeigen_draft_ad",
   "kleinanzeigen_set_ad_active",
   "kleinanzeigen_set_ad_fields",
+  "kleinanzeigen_set_ad_images",
+  "kleinanzeigen_assign_internal_ids",
+  "kleinanzeigen_sync_check",
   "kleinanzeigen_send_message",
 ]);
 
@@ -148,8 +155,36 @@ export function buildKleinanzeigenApprovalDescription({ toolName, params = {}, c
   if (summarizedAdPaths) {
     lines.push(`Ad paths (${adPaths.length}): ${summarizedAdPaths}`);
   }
+  if (Array.isArray(params.internalIds) && params.internalIds.length > 0) {
+    lines.push(
+      `Internal IDs (${params.internalIds.length}): ${truncateText(params.internalIds.join(", "), 44)}`,
+    );
+  }
   if (Array.isArray(params.adIds) && params.adIds.length > 0) {
     lines.push(`Ad IDs (${params.adIds.length}): ${truncateText(params.adIds.join(", "), 44)}`);
+  }
+  if (operation !== "draft_ad" && typeof params.title === "string") {
+    lines.push(`New title: ${truncateText(params.title, 60)}`);
+  }
+  if (operation !== "draft_ad" && typeof params.description === "string") {
+    lines.push(`New description: ${params.description.length} characters`);
+  }
+  if (operation === "set_ad_images" && Array.isArray(params.images)) {
+    lines.push(
+      `Images in order (${params.images.length}): ${truncateText(
+        params.images.map((entry) => path.basename(String(entry))).join(", "),
+        120,
+      )}`,
+    );
+  }
+  if (operation === "sync_check") {
+    lines.push("Opens the live browser and downloads this ad to compare it");
+    if (Array.isArray(params.apply) && params.apply.length > 0) {
+      lines.push(`Take over from online: ${truncateText(params.apply.join(", "), 80)}`);
+    }
+    if (params.applyImages === true) {
+      lines.push("Take over online images");
+    }
   }
   if (typeof params.directory === "string") {
     lines.push(`Directory: ${truncateText(relativeConfiguredPath(params.directory, config) ?? "", 44)}`);
@@ -157,7 +192,8 @@ export function buildKleinanzeigenApprovalDescription({ toolName, params = {}, c
   if (
     ["verify", "publish", "update", "download", "extend"].includes(operation) &&
     adPaths.length === 0 &&
-    !params.adIds?.length
+    !params.adIds?.length &&
+    !params.internalIds?.length
   ) {
     lines.push("Scope: miniclaw config default selection");
   }
@@ -228,6 +264,24 @@ const adIdsSchema = {
   description: "Explicit numeric Kleinanzeigen ad IDs.",
 };
 
+const internalIdsSchema = {
+  type: "array",
+  minItems: 1,
+  maxItems: 20,
+  items: {
+    type: "integer",
+    minimum: 1,
+  },
+  description:
+    "Internal ad IDs (internal_id in ad.yaml). The stable reference for an ad: it never " +
+    "changes, unlike the Kleinanzeigen ID after a republication. Prefer this scope.",
+};
+
+const singleInternalIdsSchema = {
+  ...internalIdsSchema,
+  maxItems: 1,
+};
+
 const adConfigPathsSchema = {
   type: "array",
   minItems: 1,
@@ -263,8 +317,15 @@ const singleAdDirectoriesSchema = {
 };
 
 const adConfigScopeProperties = {
+  internalIds: internalIdsSchema,
   adConfigPaths: adConfigPathsSchema,
   adDirectories: adDirectoriesSchema,
+};
+
+const singleAdScopeProperties = {
+  internalIds: singleInternalIdsSchema,
+  adConfigPaths: singleAdConfigPathsSchema,
+  adDirectories: singleAdDirectoriesSchema,
 };
 
 const adOperationScopeProperties = {
@@ -676,8 +737,7 @@ function readAdTool(config) {
     description:
       "Read one existing ad config under trusted adRoots with contact fields redacted by default.",
     parameters: objectSchema({
-      adConfigPaths: singleAdConfigPathsSchema,
-      adDirectories: singleAdDirectoriesSchema,
+      ...singleAdScopeProperties,
       includeContact: {
         type: "boolean",
         description: "Include contact fields instead of redacting them. Defaults to false.",
@@ -745,8 +805,7 @@ function setAdActiveTool(config) {
     parameters: objectSchema(
       {
         confirm: confirmSchema,
-        adConfigPaths: singleAdConfigPathsSchema,
-        adDirectories: singleAdDirectoriesSchema,
+        ...singleAdScopeProperties,
         active: {
           type: "boolean",
           description: "Whether the selected ad is eligible for publish/update.",
@@ -764,13 +823,25 @@ function setAdFieldsTool(config) {
     name: "kleinanzeigen_set_ad_fields",
     label: "Kleinanzeigen Set Ad Fields",
     description:
-      "Change price, price type, or the sold marker of one YAML ad config under trusted " +
-      "adRoots, or record a hand-submitted publication. Marking sold also deactivates the ad.",
+      "Change title, description, price, price type, or the sold marker of one YAML ad " +
+      "config under trusted adRoots, or record a hand-submitted publication. Marking sold " +
+      "also deactivates the ad. Local only: run kleinanzeigen_update afterwards to change " +
+      "the live ad.",
     parameters: objectSchema(
       {
         confirm: confirmSchema,
-        adConfigPaths: singleAdConfigPathsSchema,
-        adDirectories: singleAdDirectoriesSchema,
+        ...singleAdScopeProperties,
+        title: {
+          type: "string",
+          minLength: 10,
+          maxLength: 65,
+          description: "New Kleinanzeigen title.",
+        },
+        description: {
+          type: "string",
+          maxLength: 4000,
+          description: "New ad description (replaces the whole text). Multiline is supported.",
+        },
         price: {
           type: "integer",
           minimum: 0,
@@ -871,6 +942,126 @@ function sendMessageTool(config) {
   });
 }
 
+function findAdTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_find_ad",
+    label: "Kleinanzeigen Find Ad",
+    description:
+      "Find local ads by internal ID (#12 or 12), Kleinanzeigen ID, or title words. Use it " +
+      "whenever the user names an ad, then scope every further call with internalIds.",
+    parameters: objectSchema(
+      {
+        ref: {
+          type: "string",
+          description: "Internal ID, Kleinanzeigen ID, or words from the title.",
+        },
+        maxResults: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Maximum matches to return. Defaults to 10.",
+        },
+      },
+      ["ref"],
+    ),
+    operation: "find_ad",
+    handler: (toolConfig, params) => findKleinanzeigenAd(params, toolConfig),
+  });
+}
+
+function assignInternalIdsTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_assign_internal_ids",
+    label: "Kleinanzeigen Assign Internal IDs",
+    description:
+      "Give every local YAML ad under adRoots without internal_id the next free internal ID " +
+      "(oldest ads first). Existing internal IDs are never changed. Local only.",
+    parameters: objectSchema({ confirm: confirmSchema }, ["confirm"]),
+    operation: "assign_internal_ids",
+    handler: (toolConfig, params) => assignKleinanzeigenInternalIds(params, toolConfig),
+  });
+}
+
+function setAdImagesTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_set_ad_images",
+    label: "Kleinanzeigen Set Ad Images",
+    description:
+      "Set the images of one YAML ad in display order. The first image is the cover. Files " +
+      "outside the ad directory (but inside adRoots, e.g. an inbox folder) are copied into " +
+      "it. Unlisted files stay on disk. Local only: run kleinanzeigen_update afterwards for " +
+      "a published ad.",
+    parameters: objectSchema(
+      {
+        confirm: confirmSchema,
+        ...singleAdScopeProperties,
+        images: {
+          type: "array",
+          minItems: 1,
+          maxItems: 20,
+          items: { type: "string" },
+          description:
+            "Image files in display order: names relative to the ad directory, paths " +
+            "relative to an adRoot, or absolute paths inside adRoots. .jpg/.jpeg/.png/.gif.",
+        },
+      },
+      ["confirm", "images"],
+    ),
+    operation: "set_ad_images",
+    handler: (toolConfig, params) => setKleinanzeigenAdImages(params, toolConfig),
+  });
+}
+
+function syncCheckTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_sync_check",
+    label: "Kleinanzeigen Sync Check",
+    description:
+      "Download one published ad from Kleinanzeigen into a temporary folder and compare it " +
+      "with the local ad.yaml (title, description, category, price, shipping, attributes, " +
+      "image count). Optionally take over online values with apply/applyImages. Opens the " +
+      "live browser; nothing is changed on Kleinanzeigen.",
+    parameters: objectSchema(
+      {
+        confirm: confirmSchema,
+        ...singleAdScopeProperties,
+        apply: {
+          type: "array",
+          minItems: 1,
+          maxItems: 11,
+          uniqueItems: true,
+          items: {
+            type: "string",
+            enum: [
+              "title",
+              "description",
+              "category",
+              "price",
+              "price_type",
+              "type",
+              "shipping_type",
+              "shipping_costs",
+              "shipping_options",
+              "sell_directly",
+              "special_attributes",
+            ],
+          },
+          description: "Fields to take over from the online ad into the local ad.yaml.",
+        },
+        applyImages: {
+          type: "boolean",
+          description:
+            "Replace the local image list with the online images (copied as online-NN.jpg).",
+        },
+      },
+      ["confirm"],
+    ),
+    operation: "sync_check",
+    needsUserAction: true,
+    handler: (toolConfig, params) => syncCheckKleinanzeigenAd(params, toolConfig),
+  });
+}
+
 function browserStatusTool(config) {
   return localTool(config, {
     name: "kleinanzeigen_browser_status",
@@ -966,6 +1157,7 @@ export function createKleinanzeigenTools(config = {}) {
     categoriesTool(config),
     marketSearchTool(config),
     messagesTool(config),
+    findAdTool(config),
     readAdTool(config),
     imagesListTool(config),
     browserStatusTool(config),
@@ -974,6 +1166,9 @@ export function createKleinanzeigenTools(config = {}) {
     draftAdTool(config),
     setAdActiveTool(config),
     setAdFieldsTool(config),
+    setAdImagesTool(config),
+    assignInternalIdsTool(config),
+    syncCheckTool(config),
     sendMessageTool(config),
     configuredOperationTool(config, {
       name: "kleinanzeigen_verify",
@@ -1029,9 +1224,10 @@ export function createKleinanzeigenTools(config = {}) {
       name: "kleinanzeigen_delete",
       label: "Kleinanzeigen Delete",
       description:
-        "Delete explicitly selected Kleinanzeigen ads via miniclaw after confirmation.",
+        "Delete explicitly selected Kleinanzeigen ads (adIds or internalIds) via miniclaw " +
+        "after confirmation.",
       operation: "delete",
-      parameters: adOperationSchema({}, ["confirm", "adIds"]),
+      parameters: adOperationSchema({}, ["confirm"]),
     }),
     configuredOperationTool(config, {
       name: "kleinanzeigen_download",

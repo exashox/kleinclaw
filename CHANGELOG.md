@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- internal ad IDs: `internal_id` in `ad.yaml` is the stable reference for an
+  ad across republications; `kleinanzeigen_draft_ad` assigns it, the new
+  `kleinanzeigen_assign_internal_ids` numbers existing ads, and every
+  ad-scoped tool accepts `internalIds` (delete and download map them to the
+  current Kleinanzeigen IDs); `internal_id` is excluded from the content hash
+- add `kleinanzeigen_find_ad`: resolve an ad by internal ID, Kleinanzeigen ID,
+  or title words and flag ambiguous matches
+- `kleinanzeigen_list_ads`: `internalId`, `adsWithoutInternalId`,
+  `internalIdDuplicates`, `nextFreeInternalId`, and `query: "#12"`
+- `kleinanzeigen_draft_ad`: overwriting a draft keeps `internal_id`, `id`,
+  `content_hash`, and the other publication fields, so it no longer turns a
+  published ad into a duplicate on the next publish
+- add `kleinanzeigen_set_ad_images`: set the image order of one ad and copy
+  photos from an inbox folder under `adRoots`
+- publish and update store an `images_fingerprint`, so swapped image files
+  with unchanged names count as `changed`
+- `kleinanzeigen_set_ad_fields`: `title` and `description`
+- add `kleinanzeigen_sync_check`: download one published ad temporarily,
+  compare it with the local ad, and optionally take over the online version;
+  miniclaw `download` accepts `--download-dir`
+- miniclaw: `publishing.delete_old_ads_by_title` now defaults to `false`, so a
+  republication no longer deletes other ads that share the title
+- operation outcomes name the internal ID and the previous Kleinanzeigen ID
+  after a republication
+- helper skill: internal IDs, several ads in one conversation, image order,
+  changing published ads, and sync after edits on the website
+
 ## 0.5.0 - 2026-11-15
 
 - add `kleinanzeigen_send_message`: replies in conversations about local ads;
