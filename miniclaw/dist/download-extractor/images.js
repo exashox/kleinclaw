@@ -6,6 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { elementAttribute } from "./browser-elements.js";
+import { elementPresent } from "./probe.js";
 import { By, TimeoutError, } from "../web-primitives.js";
 const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT = 60;
 function contentTypeExtension(contentType) {
@@ -48,6 +49,9 @@ export async function downloadAndSaveImage(url, directory, filenamePrefix, image
 }
 export async function downloadImagesFromAdPage(controller, downloadImage, directory, adFileStem, { imageDownloadTimeout } = {}) {
     const imagePaths = [];
+    if (!(await elementPresent(controller, By.CLASS_NAME, "galleryimage-large"))) {
+        return imagePaths;
+    }
     try {
         const imageBox = await controller.webFind(By.CLASS_NAME, "galleryimage-large");
         const images = await controller.webFindAll(By.CSS_SELECTOR, ".galleryimage-element[data-ix] > img", { parent: imageBox });

@@ -45,6 +45,10 @@ import {
   STAGING_DIR_PREFIX,
 } from "./download-extractor/persistence.js";
 import {
+  elementPresent,
+  type ProbingController,
+} from "./download-extractor/probe.js";
+import {
   contentHashForLoadedAd,
   toAd,
   type AdInput,
@@ -71,7 +75,7 @@ export {
 const LOG_SNIPPET_LIMIT = 120;
 const ELLIPSIS = "...";
 
-export interface DownloadExtractorController {
+export interface DownloadExtractorController extends ProbingController {
   readonly page?: { url?: string };
   webExecute(jscode: string): Promise<unknown>;
   webFind(
@@ -313,13 +317,16 @@ export class DownloadAdExtractor {
     info.contact = await this.extractContactFromAdPage();
     info.id = adId;
 
+    const creationDateXpath =
+      "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
+      "article/div[3]/div[2]/div[2]/div[1]/span";
     let creationDate: string;
     try {
-      creationDate = await this.controller.webText(
-        By.XPATH,
-        "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
-          "article/div[3]/div[2]/div[2]/div[1]/span",
-      );
+      // The absolute XPath breaks with every layout change; probe it briefly.
+      if (!(await elementPresent(this.controller, By.XPATH, creationDateXpath))) {
+        throw new TimeoutError("Creation date XPath not present");
+      }
+      creationDate = await this.controller.webText(By.XPATH, creationDateXpath);
     } catch (error) {
       if (!(error instanceof TimeoutError)) {
         throw error;

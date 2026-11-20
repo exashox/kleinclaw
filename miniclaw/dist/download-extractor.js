@@ -13,6 +13,7 @@ import { dimensionsFromBelenConf, parseGermanCreationDate, textAttribute, transl
 import { extractPricingInfoFromAdPage as extractPagePricingInfo, extractShippingInfoFromAdPage as extractPageShippingInfo, } from "./download-extractor/pricing-shipping.js";
 import { renderDownloadAdFileStem as renderConfiguredDownloadAdFileStem, renderDownloadFolderName as renderConfiguredDownloadFolderName, renderDownloadNameWithBudget as renderConfiguredDownloadNameWithBudget, } from "./download-extractor/naming.js";
 import { fileExists, removeTreeWithRetries, saveDownloadedAd, STAGING_DIR_PREFIX, } from "./download-extractor/persistence.js";
+import { elementPresent, } from "./download-extractor/probe.js";
 import { contentHashForLoadedAd, toAd, } from "./model/ad-model.js";
 import { By, TimeoutError, } from "./web-primitives.js";
 export { sanitizeFolderName, } from "./download-extractor/naming.js";
@@ -134,10 +135,15 @@ export class DownloadAdExtractor {
         info.images = await this.downloadImagesFromAdPage(directory, adFileStem);
         info.contact = await this.extractContactFromAdPage();
         info.id = adId;
+        const creationDateXpath = "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
+            "article/div[3]/div[2]/div[2]/div[1]/span";
         let creationDate;
         try {
-            creationDate = await this.controller.webText(By.XPATH, "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
-                "article/div[3]/div[2]/div[2]/div[1]/span");
+            // The absolute XPath breaks with every layout change; probe it briefly.
+            if (!(await elementPresent(this.controller, By.XPATH, creationDateXpath))) {
+                throw new TimeoutError("Creation date XPath not present");
+            }
+            creationDate = await this.controller.webText(By.XPATH, creationDateXpath);
         }
         catch (error) {
             if (!(error instanceof TimeoutError)) {

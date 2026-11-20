@@ -1,6 +1,7 @@
 import { type ContactInput } from "../model/ad-model.js";
 import { By, type WebElement, type WebLocator } from "../web-primitives.js";
-interface ContactController {
+import { type ProbingController } from "./probe.js";
+interface ContactController extends ProbingController {
     webFind(type: By, value: string, options?: {
         parent?: WebLocator | WebElement | null;
         timeout?: number;

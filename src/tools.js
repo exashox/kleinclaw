@@ -1139,7 +1139,8 @@ function syncTool(config) {
       "Compare published local ads (default 5, max 20) with Kleinanzeigen in one browser run (oldest " +
       "sync first). Online changes are taken over locally when the local ad is unchanged; " +
       "local changes are reported as local_ahead, changes on both sides as conflict. " +
-      "Nothing is changed on Kleinanzeigen.",
+      "The browser run stops 60 s before timeoutMs and returns a partial result; ads it " +
+      "did not reach are not_checked. Nothing is changed on Kleinanzeigen.",
     parameters: objectSchema(
       {
         confirm: confirmSchema,

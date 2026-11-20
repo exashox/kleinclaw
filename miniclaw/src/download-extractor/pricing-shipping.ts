@@ -16,12 +16,13 @@ import {
   parsePriceAmount,
   shippingOptionsFromResponse,
 } from "./page-data.js";
+import { elementPresent, type ProbingController } from "./probe.js";
 
 const SHIPPING_OPTIONS_URL =
   "https://gateway.kleinanzeigen.de/postad/api/v1/" +
   "shipping-options?posterType=PRIVATE";
 
-interface PricingShippingController {
+interface PricingShippingController extends ProbingController {
   webText(type: By, value: string): Promise<string>;
   webRequest(
     url: string,
@@ -37,6 +38,9 @@ export async function extractPricingInfoFromAdPage(
   AdInput["price"],
   NonNullable<AdInput["price_type"]>,
 ]> {
+  if (!(await elementPresent(controller, By.ID, "viewad-price"))) {
+    return [null, "NOT_APPLICABLE"];
+  }
   try {
     const priceText = await controller.webText(By.ID, "viewad-price");
     const lastToken = priceText.trim().split(/\s+/).at(-1);
@@ -67,6 +71,9 @@ export async function extractShippingInfoFromAdPage(
   number | null,
   string[] | null,
 ]> {
+  if (!(await elementPresent(controller, By.CLASS_NAME, "boxedarticle--details--shipping"))) {
+    return ["NOT_APPLICABLE", null, null];
+  }
   try {
     const shippingText = await controller.webText(
       By.CLASS_NAME,

@@ -13,8 +13,9 @@ import {
   type WebElement,
   type WebLocator,
 } from "../web-primitives.js";
+import { elementPresent, type ProbingController } from "./probe.js";
 
-interface ContactController {
+interface ContactController extends ProbingController {
   webFind(
     type: By,
     value: string,
@@ -66,14 +67,18 @@ export async function extractContactFromAdPage(
   controller: ContactController,
 ): Promise<ContactInput> {
   const contact: ContactInput = {};
-  const addressText =
-    (await optionalText(() => controller.webText(By.ID, "viewad-locality"))) ?? "";
-  try {
-    const street = await controller.webText(By.ID, "street-address");
-    contact.street = street.slice(0, -1);
-  } catch (error) {
-    if (!(error instanceof TimeoutError)) {
-      throw error;
+  const addressText = await elementPresent(controller, By.ID, "viewad-locality")
+    ? (await optionalText(() => controller.webText(By.ID, "viewad-locality"))) ?? ""
+    : "";
+  // Private sellers usually hide the street, so it is often missing.
+  if (await elementPresent(controller, By.ID, "street-address")) {
+    try {
+      const street = await controller.webText(By.ID, "street-address");
+      contact.street = street.slice(0, -1);
+    } catch (error) {
+      if (!(error instanceof TimeoutError)) {
+        throw error;
+      }
     }
   }
 
@@ -88,6 +93,10 @@ export async function extractContactFromAdPage(
 
   if (!("street" in contact)) {
     contact.street = null;
+  }
+  if (!(await elementPresent(controller, By.ID, "viewad-contact-phone"))) {
+    contact.phone = null;
+    return contact;
   }
   try {
     const phoneElement = await controller.webFind(
@@ -115,6 +124,9 @@ export async function extractContactFromAdPage(
 }
 
 async function extractContactName(controller: ContactController): Promise<string | null> {
+  if (!(await elementPresent(controller, By.ID, "viewad-contact"))) {
+    return null;
+  }
   let contactPersonElement: WebLocator;
   try {
     contactPersonElement = await controller.webFind(By.ID, "viewad-contact");
@@ -125,6 +137,9 @@ async function extractContactName(controller: ContactController): Promise<string
     throw error;
   }
   for (const className of ["iconlist-text", "userprofile-vip", "text-body-regular-strong"]) {
+    if (!(await elementPresent(controller, By.CLASS_NAME, className, { parent: contactPersonElement }))) {
+      continue;
+    }
     let nameElement: WebLocator;
     try {
       nameElement = await controller.webFind(By.CLASS_NAME, className, {
@@ -138,6 +153,9 @@ async function extractContactName(controller: ContactController): Promise<string
       throw error;
     }
     for (const tag of ["a", "span"]) {
+      if (!(await elementPresent(controller, By.TAG_NAME, tag, { parent: nameElement }))) {
+        continue;
+      }
       const text = await optionalText(() =>
         controller.webText(By.TAG_NAME, tag, { parent: nameElement, timeout: 2 }),
       );

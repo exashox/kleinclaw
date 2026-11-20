@@ -6,9 +6,13 @@
 import { OPTION_NAME_BY_CARRIER_CODE } from "../model/ad-model.js";
 import { By, TimeoutError, } from "../web-primitives.js";
 import { parseGermanDecimal, parsePriceAmount, shippingOptionsFromResponse, } from "./page-data.js";
+import { elementPresent } from "./probe.js";
 const SHIPPING_OPTIONS_URL = "https://gateway.kleinanzeigen.de/postad/api/v1/" +
     "shipping-options?posterType=PRIVATE";
 export async function extractPricingInfoFromAdPage(controller) {
+    if (!(await elementPresent(controller, By.ID, "viewad-price"))) {
+        return [null, "NOT_APPLICABLE"];
+    }
     try {
         const priceText = await controller.webText(By.ID, "viewad-price");
         const lastToken = priceText.trim().split(/\s+/).at(-1);
@@ -32,6 +36,9 @@ export async function extractPricingInfoFromAdPage(controller) {
     }
 }
 export async function extractShippingInfoFromAdPage(config, controller) {
+    if (!(await elementPresent(controller, By.CLASS_NAME, "boxedarticle--details--shipping"))) {
+        return ["NOT_APPLICABLE", null, null];
+    }
     try {
         const shippingText = await controller.webText(By.CLASS_NAME, "boxedarticle--details--shipping");
         if (shippingText === "Nur Abholung") {

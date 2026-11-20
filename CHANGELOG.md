@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5 - 2026-11-20
+
+- miniclaw download: optional fields on the ad page (street, phone, contact
+  name, price, shipping, gallery, the old creation-date XPath) are checked once
+  and briefly; before, every missing field waited through all retries (about
+  24 seconds), which made five ads take more than ten minutes
+- `kleinanzeigen_sync` and `kleinanzeigen_sync_check`: the browser run stops
+  60 seconds before the requested `timeoutMs`, so the agent gets the ads read so
+  far (`partial: true`); ads that were not reached are `not_checked` instead of
+  `not_found_online`
+
 ## 0.5.4 - 2026-11-20
 
 - miniclaw download: one unreadable ad page no longer stops the whole run; the

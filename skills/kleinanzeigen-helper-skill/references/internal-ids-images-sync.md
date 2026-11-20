@@ -107,6 +107,9 @@ old and the new Kleinanzeigen ID (`previousId` in the outcome).
 - `conflict`: both sides changed. Show the differences and ask per field.
 - `not_found_online`: the ad may be deleted, expired, or paused. Ask before
   changing anything.
+- `not_checked` (with `partial: true`): the browser run hit its time limit
+  before it reached these ads. Report what was checked and offer another sync
+  with a smaller `maxAds`; do not call this a failure of those ads.
 - When the user wants a daily sync, suggest an OpenClaw cron job that asks you
   to run `kleinanzeigen_sync` and report; do not loop it yourself.
 

@@ -1,10 +1,11 @@
 import { type DownloadImage, type DownloadImageOptions } from "./download-extractor/images.js";
+import { type ProbingController } from "./download-extractor/probe.js";
 import { type AdInput, type ContactInput } from "./model/ad-model.js";
 import { type Config } from "./model/config-model.js";
 import { By, type WebElement, type WebLocator, type WebRequestOptions, type WebResponse } from "./web-primitives.js";
 export { sanitizeFolderName, } from "./download-extractor/naming.js";
 export { AD_SCHEMA_HEADER, FileExistsError, } from "./download-extractor/persistence.js";
-export interface DownloadExtractorController {
+export interface DownloadExtractorController extends ProbingController {
     readonly page?: {
         url?: string;
     };

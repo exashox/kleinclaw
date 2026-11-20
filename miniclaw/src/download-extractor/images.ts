@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { elementAttribute } from "./browser-elements.js";
+import { elementPresent, type ProbingController } from "./probe.js";
 import {
   By,
   TimeoutError,
@@ -31,7 +32,7 @@ export interface DownloadImagesFromAdPageOptions {
   imageDownloadTimeout?: number;
 }
 
-interface DownloadImagesController {
+interface DownloadImagesController extends ProbingController {
   webFind(
     type: By,
     value: string,
@@ -101,6 +102,9 @@ export async function downloadImagesFromAdPage(
   { imageDownloadTimeout }: DownloadImagesFromAdPageOptions = {},
 ): Promise<string[]> {
   const imagePaths: string[] = [];
+  if (!(await elementPresent(controller, By.CLASS_NAME, "galleryimage-large"))) {
+    return imagePaths;
+  }
   try {
     const imageBox = await controller.webFind(
       By.CLASS_NAME,

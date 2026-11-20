@@ -468,7 +468,10 @@ hash. Per ad it decides:
 | any | equal | `in_sync` |
 
 Ads that are not online any more are reported as `not_found_online`, ads whose
-page could not be read as `download_failed` with the reason.
+page could not be read as `download_failed` with the reason. When the call
+passes `timeoutMs`, the browser run stops 60 seconds earlier, so the agent still
+gets the ads read so far (`partial: true`); the ads it did not reach are
+`not_checked`.
 `dryRun: true` only reports (`would_pull`). Run it on a schedule, for example
 once a day with an OpenClaw cron job that asks the agent to sync and report.
 

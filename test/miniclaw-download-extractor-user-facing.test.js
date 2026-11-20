@@ -276,6 +276,43 @@ describe("miniclaw download contact and classification", () => {
     });
   });
 
+  it("probes optional fields once instead of waiting through every retry", async () => {
+    const present = new Set([key(By.ID, "viewad-locality"), key(By.ID, "viewad-contact")]);
+    const slowLookups = [];
+    const base = createController({
+      elements: { [key(By.ID, "viewad-contact")]: fakeElement() },
+      texts: { [key(By.ID, "viewad-locality")]: "10115 Berlin Mitte" },
+    });
+    const controller = {
+      ...base,
+      async webProbe(type, value) {
+        return present.has(key(type, value)) ? fakeElement() : null;
+      },
+      async webFind(type, value, options) {
+        slowLookups.push(key(type, value));
+        return base.webFind(type, value, options);
+      },
+      async webText(type, value, options) {
+        slowLookups.push(key(type, value));
+        return base.webText(type, value, options);
+      },
+    };
+
+    assert.deepEqual(await extractContactFromAdPage(controller), {
+      location: "Berlin Mitte",
+      phone: null,
+      street: null,
+      zipcode: "10115",
+    });
+    assert.deepEqual(await extractPricingInfoFromAdPage(controller), [null, "NOT_APPLICABLE"]);
+    assert.deepEqual(
+      await extractShippingInfoFromAdPage(new Config({}), controller),
+      ["NOT_APPLICABLE", null, null],
+    );
+    // Only fields that exist are read with the regular (retrying) lookup.
+    assert.deepEqual(slowLookups, [key(By.ID, "viewad-locality"), key(By.ID, "viewad-contact")]);
+  });
+
   it("uses published-ad metadata for sell-directly and category breadcrumbs", async () => {
     assert.equal(
       extractSellDirectlyFromAdPage(

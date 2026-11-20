@@ -4399,6 +4399,22 @@ const ONLINE_HASH_KEY = "online_hash";
 const LAST_SYNCED_KEY = "last_synced_on";
 const MAX_SYNC_ADS = 20;
 const DEFAULT_SYNC_ADS = 5;
+// The browser run must stop before the agent harness gives up on the tool
+// call, or the ads that were already read are lost with it.
+const SYNC_RESULT_MARGIN_MS = 60000;
+const MIN_SYNC_PROCESS_TIMEOUT_MS = 30000;
+
+/** Browser time for a read-only sync, kept below the call budget the agent requested. */
+function syncProcessTimeoutMs(params, cliConfig) {
+  const budget = Number.isInteger(params.timeoutMs) && params.timeoutMs > 0 ? params.timeoutMs : null;
+  if (budget === null) {
+    return cliConfig.liveTimeoutMs;
+  }
+  return Math.min(
+    cliConfig.liveTimeoutMs,
+    Math.max(MIN_SYNC_PROCESS_TIMEOUT_MS, budget - SYNC_RESULT_MARGIN_MS),
+  );
+}
 
 function normalizeSyncText(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
@@ -4502,7 +4518,7 @@ async function findDownloadedAdFiles(directory, depth = 0) {
 }
 
 /** Downloads live ads into a temporary folder next to the miniclaw config. */
-async function downloadOnlineAds(adIds, cliConfig) {
+async function downloadOnlineAds(adIds, cliConfig, { timeoutMs = cliConfig.liveTimeoutMs } = {}) {
   const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const downloadDir = path.join(path.dirname(cliConfig.configPath), `.kleinclaw-sync-${suffix}`);
   await fs.mkdir(downloadDir, { recursive: true, mode: 0o700 });
@@ -4516,11 +4532,12 @@ async function downloadOnlineAds(adIds, cliConfig) {
     args.push(`--download-dir=${downloadDir}`);
     const result = await runRuntimeProcess(cliConfig.runtime, args, {
       cwd: cliConfig.cwd,
-      timeoutMs: cliConfig.liveTimeoutMs,
+      timeoutMs,
       maxBufferChars: cliConfig.maxOutputChars,
       env: buildChildEnv(),
       commandRunner: cliConfig.commandRunner,
     });
+    // After a timeout the folder still holds every ad that was read completely.
     const hashing = await loadMiniclawHashing();
     const onlineById = new Map();
     for (const file of await findDownloadedAdFiles(downloadDir)) {
@@ -4661,7 +4678,10 @@ function downloadFailurePayload(base, download, config, cliConfig) {
     timedOut: result.timedOut,
     needsUserAction: userAction.needsUserAction,
     ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
-    message: "nothing could be downloaded; the ads may be offline or deleted, or the login failed",
+    message: result.timedOut
+      ? "the browser run hit its time limit before any ad was read; check the login in the " +
+        "browser or sync fewer ads (maxAds)"
+      : "nothing could be downloaded; the ads may be offline or deleted, or the login failed",
     stdout: sanitizeText(result.stdout, redactions, 2000),
     stderr: sanitizeText(result.stderr, redactions, 2000),
   };
@@ -4692,7 +4712,9 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}, { now =
 
   const cliConfig = resolveCliConfig(config);
   await assertConfiguredFiles(cliConfig);
-  const download = await downloadOnlineAds([summary.id], cliConfig);
+  const download = await downloadOnlineAds([summary.id], cliConfig, {
+    timeoutMs: syncProcessTimeoutMs(params, cliConfig),
+  });
   try {
     const base = {
       operation: "sync_check",
@@ -4804,7 +4826,10 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
 
   const cliConfig = resolveCliConfig(config);
   await assertConfiguredFiles(cliConfig);
-  const download = await downloadOnlineAds(selected.map((ad) => ad.summary.id), cliConfig);
+  const download = await downloadOnlineAds(selected.map((ad) => ad.summary.id), cliConfig, {
+    timeoutMs: syncProcessTimeoutMs(params, cliConfig),
+  });
+  const timedOut = download.result.timedOut === true;
   try {
     if (download.onlineById.size === 0 && download.failedById.size === 0) {
       return downloadFailurePayload(base, download, config, cliConfig);
@@ -4833,7 +4858,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
         continue;
       }
       if (!onlineEntry) {
-        results.push({ ...reference, status: "not_found_online" });
+        // After a timeout, a missing ad was most likely not reached yet.
+        results.push({ ...reference, status: timedOut ? "not_checked" : "not_found_online" });
         continue;
       }
       const assessment = await assessAgainstOnline(ad.adConfigPath, onlineEntry, context);
@@ -4912,6 +4938,12 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
         "not_found_online ads may be deleted, expired or paused; ask the user before changing them",
       );
     }
+    if (counts.not_checked) {
+      nextActions.push(
+        "the browser run hit its time limit; not_checked ads were not read. " +
+          "Report the partial result and offer a new sync with a smaller maxAds",
+      );
+    }
     if (base.remaining > 0) {
       nextActions.push(`${base.remaining} more ads are due; the next sync continues with them`);
     }
@@ -4919,7 +4951,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     return {
       ok: true,
       ...base,
-      checked: results.length,
+      checked: results.length - (counts.not_checked ?? 0),
+      ...(timedOut ? { timedOut: true, partial: true } : {}),
       counts,
       results,
       nextActions,

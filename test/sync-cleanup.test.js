@@ -219,6 +219,37 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.equal(byId[2].status, "in_sync");
   });
 
+  it("stops the browser before the call budget and reports a partial result", async () => {
+    const { adRoot, config } = await workspace();
+    await publishedAd(adRoot, "lamp", {
+      internalId: 1, id: "3100000001", title: "Schreibtischlampe Metall", price: 30,
+    });
+    await publishedAd(adRoot, "chair", {
+      internalId: 2, id: "3100000002", title: "Bürostuhl mit Armlehnen", price: 40,
+    });
+    // Only the first ad was read before the time limit.
+    const online = {
+      3100000001: { title: "Schreibtischlampe Metall", description: "Gut erhalten.", category: "210/217", price: 30 },
+    };
+    const download = fakeKleinanzeigen(online);
+    const timeouts = [];
+    const runner = async (argv, options) => {
+      timeouts.push(options.timeoutMs);
+      const result = await download(argv);
+      return { ...result, code: null, signal: "SIGKILL", termination: "timeout" };
+    };
+    const result = await syncKleinanzeigenAds(
+      { confirm: true, dryRun: true, timeoutMs: 600000 },
+      { ...config, commandRunner: runner },
+    );
+    assert.deepEqual(timeouts, [540000], "browser run ends 60 s before the call budget");
+    assert.equal(result.partial, true);
+    assert.equal(result.checked, 1);
+    const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry.status]));
+    assert.deepEqual(byId, { 1: "in_sync", 2: "not_checked" });
+    assert.ok(result.nextActions.some((action) => /smaller maxAds/.test(action)));
+  });
+
   it("requires confirmation and limits one run to 20 ads", async () => {
     const { config } = await workspace();
     await assert.rejects(syncKleinanzeigenAds({}, config), /confirm must be true/);

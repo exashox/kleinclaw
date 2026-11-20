@@ -1,7 +1,8 @@
 import { type AdInput } from "../model/ad-model.js";
 import { type Config } from "../model/config-model.js";
 import { By, type WebResponse } from "../web-primitives.js";
-interface PricingShippingController {
+import { type ProbingController } from "./probe.js";
+interface PricingShippingController extends ProbingController {
     webText(type: By, value: string): Promise<string>;
     webRequest(url: string, method?: string, validResponseCodes?: number | Iterable<number>, headers?: Record<string, string> | null): Promise<WebResponse>;
 }
