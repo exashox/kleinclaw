@@ -87,9 +87,11 @@ export function downloadDoneMessage(
   selector: string,
   downloaded: number,
   targetCount: number,
+  failed = 0,
 ): string {
+  const failures = failed > 0 ? ` (${failed} failed)` : "";
   if (selector === "new") {
-    return `DONE: Downloaded ${pluralizedAds(downloaded)}`;
+    return `DONE: Downloaded ${pluralizedAds(downloaded)}${failures}`;
   }
-  return `DONE: Downloaded ${downloaded} of ${pluralizedAds(targetCount)}`;
+  return `DONE: Downloaded ${downloaded} of ${pluralizedAds(targetCount)}${failures}`;
 }

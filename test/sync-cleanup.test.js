@@ -13,6 +13,8 @@ import {
   syncKleinanzeigenAds,
 } from "../src/cli.js";
 import { contentHashForAd } from "../miniclaw/dist/index.js";
+import { runDownloadAdsBatch } from "../miniclaw/dist/download-orchestration.js";
+import { downloadDoneMessage } from "../miniclaw/dist/cli/messages.js";
 
 async function workspace() {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kleinclaw-sync-")));
@@ -191,11 +193,76 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.deepEqual((await readAd(lamp)).images, ["online-01.jpg", "online-02.jpg"]);
   });
 
+  it("keeps checking the other ads when one ad cannot be downloaded", async () => {
+    const { adRoot, config } = await workspace();
+    await publishedAd(adRoot, "lamp", {
+      internalId: 1, id: "3100000001", title: "Schreibtischlampe Metall", price: 30,
+    });
+    await publishedAd(adRoot, "chair", {
+      internalId: 2, id: "3100000002", title: "Bürostuhl mit Armlehnen", price: 40,
+    });
+    const online = {
+      3100000002: { title: "Bürostuhl mit Armlehnen", description: "Gut erhalten.", category: "210/217", price: 40 },
+    };
+    const download = fakeKleinanzeigen(online);
+    const runner = async (argv) => {
+      const result = await download(argv);
+      return {
+        ...result,
+        stderr: "Failed to download ad 3100000001: No HTML element found with CSS class 'iconlist-text'\n",
+      };
+    };
+    const result = await syncKleinanzeigenAds({ confirm: true, dryRun: true }, { ...config, commandRunner: runner });
+    const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry]));
+    assert.equal(byId[1].status, "download_failed");
+    assert.match(byId[1].error, /iconlist-text/);
+    assert.equal(byId[2].status, "in_sync");
+  });
+
   it("requires confirmation and limits one run to 20 ads", async () => {
     const { config } = await workspace();
     await assert.rejects(syncKleinanzeigenAds({}, config), /confirm must be true/);
     const empty = await syncKleinanzeigenAds({ confirm: true }, config);
     assert.equal(empty.checked, 0);
+  });
+});
+
+describe("miniclaw download batch", () => {
+  it("skips an unreadable ad and downloads the others", async () => {
+    const downloaded = [];
+    const result = await runDownloadAdsBatch({
+      selector: "1,2,3",
+      downloadDir: "/tmp/x",
+      extractOwnAdsUrls: async () => [],
+      navigateToAdPage: async () => true,
+      downloadAd: async ({ adId }) => {
+        if (adId === 2) {
+          throw new Error("No HTML element found with CSS class 'iconlist-text'");
+        }
+        downloaded.push(adId);
+      },
+    });
+    assert.deepEqual(downloaded, [1, 3]);
+    assert.equal(result.downloaded, 2);
+    assert.equal(result.failed, 1);
+    assert.equal(downloadDoneMessage("1,2,3", 2, 3, 1), "DONE: Downloaded 2 of 3 ads (1 failed)");
+  });
+
+  it("stops when the browser connection is lost", async () => {
+    const lost = new Error("Target closed");
+    lost.name = "ProtocolError";
+    await assert.rejects(
+      runDownloadAdsBatch({
+        selector: "1,2",
+        downloadDir: "/tmp/x",
+        extractOwnAdsUrls: async () => [],
+        navigateToAdPage: async () => true,
+        downloadAd: async () => {
+          throw lost;
+        },
+      }),
+      /Target closed/,
+    );
   });
 });
 

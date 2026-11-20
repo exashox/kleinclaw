@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4 - 2026-11-20
+
+- miniclaw download: one unreadable ad page no longer stops the whole run; the
+  other ads are still downloaded and `DONE:` reports `(N failed)`; a lost
+  browser connection still stops the run
+- miniclaw download: the seller's contact box is read best effort; a changed
+  layout (`No HTML element found with CSS class 'iconlist-text'`) leaves the
+  contact name out instead of failing the download
+- `kleinanzeigen_sync`: ads that could not be downloaded are reported as
+  `download_failed` with the reason instead of `not_found_online`
+
 ## 0.5.3 - 2026-11-20
 
 - browser tools (publish, update, delete, download, extend, verify, sync,

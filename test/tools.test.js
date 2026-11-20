@@ -236,7 +236,7 @@ describe("kleinanzeigen plugin tools", () => {
       assert.equal(hasTimeout, longRunning, `${tool.name} timeoutMs`);
       if (longRunning) {
         assert.equal(tool.parameters.properties.timeoutMs.maximum, 600000);
-        assert.match(tool.description, /Pass timeoutMs: 600000./);
+        assert.match(tool.description, /Pass timeoutMs: 600000\./);
       }
     }
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_find_ad"), false);

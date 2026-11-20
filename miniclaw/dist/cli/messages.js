@@ -64,9 +64,10 @@ export function extendDoneMessage(extended, attempted) {
     }
     return `DONE: Extended ${pluralizedAds(extended)}`;
 }
-export function downloadDoneMessage(selector, downloaded, targetCount) {
+export function downloadDoneMessage(selector, downloaded, targetCount, failed = 0) {
+    const failures = failed > 0 ? ` (${failed} failed)` : "";
     if (selector === "new") {
-        return `DONE: Downloaded ${pluralizedAds(downloaded)}`;
+        return `DONE: Downloaded ${pluralizedAds(downloaded)}${failures}`;
     }
-    return `DONE: Downloaded ${downloaded} of ${pluralizedAds(targetCount)}`;
+    return `DONE: Downloaded ${downloaded} of ${pluralizedAds(targetCount)}${failures}`;
 }

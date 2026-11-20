@@ -467,7 +467,8 @@ hash. Per ad it decides:
 | changed | changed | `conflict`: nothing written, the user decides per field |
 | any | equal | `in_sync` |
 
-Ads that are not online any more are reported as `not_found_online`.
+Ads that are not online any more are reported as `not_found_online`, ads whose
+page could not be read as `download_failed` with the reason.
 `dryRun: true` only reports (`would_pull`). Run it on a schedule, for example
 once a day with an OpenClaw cron job that asks the agent to sync and report.
 

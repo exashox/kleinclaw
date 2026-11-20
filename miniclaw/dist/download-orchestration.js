@@ -51,22 +51,40 @@ function event(source, status, adId, adUrl) {
 }
 async function downloadResolvedAd({ adId, adUrl, adsById, downloadAd, downloadDir, navigateToAdPage, result, source, }) {
     result.targetCount += 1;
-    const exists = await navigateToAdPage({ adId, adUrl, source });
-    if (!exists) {
-        result.skipped += 1;
-        result.events.push(event(source, "skipped-navigation", adId, adUrl));
+    try {
+        const exists = await navigateToAdPage({ adId, adUrl, source });
+        if (!exists) {
+            result.skipped += 1;
+            result.events.push(event(source, "skipped-navigation", adId, adUrl));
+            return;
+        }
+        const resolved = resolveDownloadAdActivity(adId, adsById);
+        await downloadAd({
+            ...resolved,
+            adId,
+            adUrl,
+            downloadDir,
+            source,
+        });
+    }
+    catch (error) {
+        if (!isIsolatedDownloadError(error)) {
+            throw error;
+        }
+        // One unreadable ad page must not stop the download of the other ads.
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to download ad ${adId}: ${message}`);
+        result.failed += 1;
+        result.events.push({ ...event(source, "failed", adId, adUrl), error: message });
         return;
     }
-    const resolved = resolveDownloadAdActivity(adId, adsById);
-    await downloadAd({
-        ...resolved,
-        adId,
-        adUrl,
-        downloadDir,
-        source,
-    });
     result.downloaded += 1;
     result.events.push(event(source, "downloaded", adId, adUrl));
+}
+function isIsolatedDownloadError(error) {
+    const name = error instanceof Error ? error.name : "";
+    // Cancellation and a lost browser connection affect every following ad too.
+    return !["AbortError", "CancelledError", "ProtocolError", "ProtocolException"].includes(name);
 }
 async function runOverviewDownload(selector, result, { downloadAd, downloadDir, extractOwnAdsUrls, navigateToAdPage, publishedAds = [], savedAds = [], }) {
     const adsById = publishedAdsById(publishedAds);
@@ -119,6 +137,7 @@ export async function runDownloadAdsBatch(options) {
     const result = {
         downloaded: 0,
         events: [],
+        failed: 0,
         selector,
         skipped: 0,
         targetCount: 0,

@@ -11,5 +11,9 @@ interface ContactController {
     }): Promise<string>;
 }
 export declare function extractSellDirectlyFromAdPage(pageUrl: string, publishedAdsById: ReadonlyMap<number, unknown>): boolean | null;
+/**
+ * Reads the seller's contact box. Every field is best effort: the box layout
+ * changes now and then, and a missing name must not fail the whole download.
+ */
 export declare function extractContactFromAdPage(controller: ContactController): Promise<ContactInput>;
 export {};

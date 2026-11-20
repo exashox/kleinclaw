@@ -253,6 +253,29 @@ describe("miniclaw download contact and classification", () => {
     });
   });
 
+  it("downloads without a contact name when the contact box layout changed", async () => {
+    const controller = createController({
+      elements: {
+        [key(By.ID, "viewad-contact")]: fakeElement(),
+        [key(By.CLASS_NAME, "iconlist-text")]: new TimeoutError("layout changed"),
+        [key(By.CLASS_NAME, "userprofile-vip")]: new TimeoutError("layout changed"),
+        [key(By.CLASS_NAME, "text-body-regular-strong")]: new TimeoutError("layout changed"),
+      },
+      texts: {
+        [key(By.ID, "viewad-locality")]: "10115 Berlin Mitte",
+        [key(By.ID, "street-address")]: new TimeoutError("no street"),
+        [key(By.ID, "viewad-contact-phone")]: new TimeoutError("no phone"),
+      },
+    });
+
+    assert.deepEqual(await extractContactFromAdPage(controller), {
+      location: "Berlin Mitte",
+      phone: null,
+      street: null,
+      zipcode: "10115",
+    });
+  });
+
   it("uses published-ad metadata for sell-directly and category breadcrumbs", async () => {
     assert.equal(
       extractSellDirectlyFromAdPage(

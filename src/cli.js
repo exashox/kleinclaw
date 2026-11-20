@@ -4530,7 +4530,12 @@ async function downloadOnlineAds(adIds, cliConfig) {
         onlineById.set(id, { file, data });
       }
     }
-    return { downloadDir, result, onlineById, hashing, cleanup };
+    const failedById = new Map();
+    const rawText = [result.stdout, result.stderr].filter(Boolean).join("\n");
+    for (const match of rawText.matchAll(/Failed to download ad (\d+): (.*)/g)) {
+      failedById.set(match[1], match[2].trim());
+    }
+    return { downloadDir, result, onlineById, failedById, hashing, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
@@ -4801,10 +4806,11 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
   await assertConfiguredFiles(cliConfig);
   const download = await downloadOnlineAds(selected.map((ad) => ad.summary.id), cliConfig);
   try {
-    if (download.onlineById.size === 0) {
+    if (download.onlineById.size === 0 && download.failedById.size === 0) {
       return downloadFailurePayload(base, download, config, cliConfig);
     }
     const context = { hashing: download.hashing, builtinCategories: await loadBuiltinCategories() };
+    const redactions = buildRedactions({ ...config, ...cliConfig });
     const results = [];
     for (const ad of selected) {
       const reference = {
@@ -4817,6 +4823,15 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
         ),
       };
       const onlineEntry = download.onlineById.get(String(ad.summary.id));
+      const failure = download.failedById.get(String(ad.summary.id));
+      if (!onlineEntry && failure !== undefined) {
+        results.push({
+          ...reference,
+          status: "download_failed",
+          error: sanitizeText(failure, redactions, 300),
+        });
+        continue;
+      }
       if (!onlineEntry) {
         results.push({ ...reference, status: "not_found_online" });
         continue;
@@ -4884,6 +4899,12 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
       nextActions.push(
         "conflict ads changed on both sides: show the differences and ask per field; " +
           "use kleinanzeigen_sync_check with apply for the online side",
+      );
+    }
+    if (counts.download_failed) {
+      nextActions.push(
+        "download_failed ads could not be read from Kleinanzeigen (page layout or network); " +
+          "report the error, they are retried by the next sync",
       );
     }
     if (counts.not_found_online) {

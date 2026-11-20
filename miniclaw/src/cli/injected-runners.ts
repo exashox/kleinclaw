@@ -263,7 +263,8 @@ export async function runInjectedDownloadCommand(
       result.selector,
       result.downloaded,
       result.targetCount,
+      result.failed,
     ),
   );
-  return 0;
+  return result.failed > 0 && result.downloaded === 0 ? 1 : 0;
 }

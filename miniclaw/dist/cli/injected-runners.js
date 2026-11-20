@@ -154,6 +154,6 @@ export async function runInjectedDownloadCommand(parsed, sideEffects, workspace)
         savedAds,
         selector: effectiveSelector,
     });
-    printDoneBlock(downloadDoneMessage(result.selector, result.downloaded, result.targetCount));
-    return 0;
+    printDoneBlock(downloadDoneMessage(result.selector, result.downloaded, result.targetCount, result.failed));
+    return result.failed > 0 && result.downloaded === 0 ? 1 : 0;
 }
