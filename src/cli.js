@@ -4398,6 +4398,7 @@ export async function kleinanzeigenImagePreferences(params = {}, config = {}, { 
 const ONLINE_HASH_KEY = "online_hash";
 const LAST_SYNCED_KEY = "last_synced_on";
 const MAX_SYNC_ADS = 20;
+const DEFAULT_SYNC_ADS = 5;
 
 function normalizeSyncText(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
@@ -4753,7 +4754,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     throw new Error("confirm must be true before opening the live browser for a sync");
   }
   const dryRun = normalizeBoolean(params.dryRun, "dryRun") ?? false;
-  const maxAds = normalizePositiveInteger(params.maxAds, MAX_SYNC_ADS, 1, MAX_SYNC_ADS);
+  // Five ads fit well into the 10-minute budget an agent harness grants a tool call.
+  const maxAds = normalizePositiveInteger(params.maxAds, DEFAULT_SYNC_ADS, 1, MAX_SYNC_ADS);
   const internalIds = normalizeInternalIds(params.internalIds, { maxItems: MAX_SYNC_ADS });
   const roots = await configuredAdRoots(config);
 

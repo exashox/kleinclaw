@@ -1136,7 +1136,7 @@ function syncTool(config) {
     name: "kleinanzeigen_sync",
     label: "Kleinanzeigen Sync",
     description:
-      "Compare up to 20 published local ads with Kleinanzeigen in one browser run (oldest " +
+      "Compare published local ads (default 5, max 20) with Kleinanzeigen in one browser run (oldest " +
       "sync first). Online changes are taken over locally when the local ad is unchanged; " +
       "local changes are reported as local_ahead, changes on both sides as conflict. " +
       "Nothing is changed on Kleinanzeigen.",
@@ -1148,7 +1148,7 @@ function syncTool(config) {
           type: "integer",
           minimum: 1,
           maximum: 20,
-          description: "Maximum ads per run. Defaults to 20.",
+          description: "Maximum ads per run. Defaults to 5; more may not finish within the tool time budget.",
         },
         dryRun: {
           type: "boolean",
@@ -1320,8 +1320,53 @@ function bindToolConfig(tool, config) {
   };
 }
 
+// Agent harnesses bound each tool call on their own: the Codex harness gives a
+// dynamic tool 90 s unless the call passes timeoutMs (capped at 600000). Browser
+// runs need longer, so these tools accept timeoutMs and ask the agent to send it.
+export const LONG_RUNNING_TOOL_NAMES = new Set([
+  "kleinanzeigen_verify",
+  "kleinanzeigen_publish",
+  "kleinanzeigen_update",
+  "kleinanzeigen_delete",
+  "kleinanzeigen_download",
+  "kleinanzeigen_extend",
+  "kleinanzeigen_sync",
+  "kleinanzeigen_sync_check",
+  "kleinanzeigen_market_search",
+  "kleinanzeigen_messages",
+  "kleinanzeigen_send_message",
+  "kleinanzeigen_browser_check",
+]);
+
+export const HARNESS_TIMEOUT_MS = 600000;
+
+const harnessTimeoutSchema = {
+  type: "integer",
+  minimum: 1000,
+  maximum: HARNESS_TIMEOUT_MS,
+  description:
+    `Time budget for this tool call in ms. Always pass ${HARNESS_TIMEOUT_MS}: browser runs ` +
+    "take minutes, and some agent harnesses stop tool calls after 90 s otherwise.",
+};
+
+function withHarnessTimeouts(tools) {
+  return tools.map((tool) => {
+    if (!LONG_RUNNING_TOOL_NAMES.has(tool.name)) {
+      return tool;
+    }
+    return {
+      ...tool,
+      description: `${tool.description} Pass timeoutMs: ${HARNESS_TIMEOUT_MS}.`,
+      parameters: {
+        ...tool.parameters,
+        properties: { ...tool.parameters.properties, timeoutMs: harnessTimeoutSchema },
+      },
+    };
+  });
+}
+
 export function createKleinanzeigenTools(config = {}) {
-  return [
+  return withHarnessTimeouts([
     statusTool(config),
     listAdsTool(config),
     adSchemaTool(config),
@@ -1423,5 +1468,5 @@ export function createKleinanzeigenTools(config = {}) {
         selector: operationSelectorSchema(["all"], "all"),
       }),
     }),
-  ];
+  ]);
 }

@@ -216,6 +216,29 @@ describe("kleinanzeigen plugin tools", () => {
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_draft_ad"), true);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_set_ad_active"), true);
     assert.equal(tools.length, 28);
+    // Long browser runs accept timeoutMs so agent harnesses do not stop them after 90 s.
+    for (const tool of tools) {
+      const hasTimeout = Object.hasOwn(tool.parameters.properties ?? {}, "timeoutMs");
+      const longRunning = [
+        "kleinanzeigen_verify",
+        "kleinanzeigen_publish",
+        "kleinanzeigen_update",
+        "kleinanzeigen_delete",
+        "kleinanzeigen_download",
+        "kleinanzeigen_extend",
+        "kleinanzeigen_sync",
+        "kleinanzeigen_sync_check",
+        "kleinanzeigen_market_search",
+        "kleinanzeigen_messages",
+        "kleinanzeigen_send_message",
+        "kleinanzeigen_browser_check",
+      ].includes(tool.name);
+      assert.equal(hasTimeout, longRunning, `${tool.name} timeoutMs`);
+      if (longRunning) {
+        assert.equal(tool.parameters.properties.timeoutMs.maximum, 600000);
+        assert.match(tool.description, /Pass timeoutMs: 600000./);
+      }
+    }
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_find_ad"), false);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_categories"), false);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_market_search"), false);

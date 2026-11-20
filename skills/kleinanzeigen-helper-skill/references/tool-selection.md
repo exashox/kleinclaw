@@ -77,6 +77,9 @@
 - `kleinanzeigen_extend`: extend all eligible live ads or explicitly selected
   IDs.
 
+Pass `timeoutMs: 600000` to every tool whose description asks for it; browser
+runs take minutes.
+
 Do not mix explicit ad IDs with selectors. For publish combinations, use
 `selectors`, for example `["changed", "due"]`.
 

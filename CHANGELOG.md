@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3 - 2026-11-20
+
+- browser tools (publish, update, delete, download, extend, verify, sync,
+  sync check, market search, messages, send message, browser check) accept
+  `timeoutMs` and ask the agent to pass 600000: the Codex agent harness stops
+  plugin tool calls after 90 seconds otherwise, while the browser run continues
+  in the background
+- `kleinanzeigen_sync`: `maxAds` defaults to 5 (maximum 20)
+- helper skill: pass `timeoutMs`, and check the local ad before repeating an
+  action after a harness timeout
+
 ## 0.5.2 - 2026-11-20
 
 - `kleinanzeigen_status`: `pluginVersion` reports the installed KleinClaw version,

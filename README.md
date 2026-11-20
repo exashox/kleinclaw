@@ -201,6 +201,11 @@ Plugin config fields:
 - `timeoutMs`: maximum runtime for one local miniclaw command (status, verify,
   market search, messages), from `1000` to `600000` milliseconds. Defaults to
   `120000`.
+- Agent harness budget: some OpenClaw agent harnesses bound each tool call on
+  their own (the Codex harness: 90 seconds unless the call passes `timeoutMs`,
+  at most 600000). All browser tools therefore accept `timeoutMs` and ask the
+  agent to pass `600000`. A harness timeout does not stop the miniclaw process;
+  it keeps running and may still finish the publish.
 - `liveTimeoutMs`: maximum runtime for one live browser run (publish, update,
   delete, download, extend, sync check), from `1000` to `1800000`
   milliseconds. Defaults to `600000` (or `timeoutMs` if that is higher). A run
@@ -449,7 +454,8 @@ browser but changes nothing on Kleinanzeigen.
 
 #### Two-way sync
 
-`kleinanzeigen_sync` checks up to 20 published ads in one browser run, the ones
+`kleinanzeigen_sync` checks published ads in one browser run (`maxAds`, default
+5, at most 20), the ones
 synced longest ago first. `online_hash` and `last_synced_on` in `ad.yaml`
 remember the live state of the last sync; both are excluded from the content
 hash. Per ad it decides:
