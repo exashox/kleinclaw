@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- live browser runs (publish, update, delete, download, extend, sync check) use
+  the new plugin setting `liveTimeoutMs` (default 10 minutes) instead of the
+  2-minute `timeoutMs`
+- miniclaw: the wait for the "ad is being checked" page after a successful
+  submit (`timeouts.publishing_result`) now defaults to 20 seconds instead of
+  5 minutes; the new ad ID is already saved at that point
+- a publish or update that times out without success evidence is marked
+  `uncertain` with next steps that prevent a duplicate publication
+
 - internal ad IDs: `internal_id` in `ad.yaml` is the stable reference for an
   ad across republications; `kleinanzeigen_draft_ad` assigns it, the new
   `kleinanzeigen_assign_internal_ids` numbers existing ads, and every

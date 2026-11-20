@@ -194,8 +194,15 @@ Plugin config fields:
   miniclaw workspace files beside `config.yaml`; `xdg` uses user config/cache
   directories.
 - `lang`: `de` or `en` for miniclaw display language.
-- `timeoutMs`: maximum runtime for one miniclaw command, from `1000` to `600000`
-  milliseconds.
+- `timeoutMs`: maximum runtime for one local miniclaw command (status, verify,
+  market search, messages), from `1000` to `600000` milliseconds. Defaults to
+  `120000`.
+- `liveTimeoutMs`: maximum runtime for one live browser run (publish, update,
+  delete, download, extend, sync check), from `1000` to `1800000`
+  milliseconds. Defaults to `600000` (or `timeoutMs` if that is higher). A run
+  that is stopped after Kleinanzeigen accepted the ad but before miniclaw saved
+  the new ID leaves the ad online without a local ID; the outcome is then marked
+  `uncertain`.
 - `maxOutputChars`: maximum sanitized stdout or stderr characters returned to
   the agent, from `0` to `20000`.
 - `approvalMode`: `all`, `mutating`, or `none`. `all` is the default; `mutating`
