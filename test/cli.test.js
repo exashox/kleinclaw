@@ -316,6 +316,9 @@ describe("kleinanzeigen CLI status", () => {
     assert.equal(status.ok, true);
     assert.equal(status.executable, "miniclaw");
     assert.equal(status.version, "2026+miniclaw");
+    assert.equal(status.runtimeVersion, "2026+miniclaw");
+    const pkg = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"));
+    assert.equal(status.pluginVersion, pkg.version);
     assert.deepEqual(status.commands, {
       verify: true,
       diagnose: true,

@@ -609,7 +609,9 @@ function statusTool(config) {
     name: "kleinanzeigen_status",
     label: "Kleinanzeigen Status",
     description:
-      "Check embedded miniclaw availability and config wiring without reading the config.",
+      "Check embedded miniclaw availability and config wiring without reading the config. " +
+      "pluginVersion is the installed KleinClaw version; runtimeVersion is the embedded " +
+      "miniclaw runtime.",
     parameters: objectSchema({}),
     operation: "status",
     handler: (toolConfig) => getKleinanzeigenStatus(toolConfig),

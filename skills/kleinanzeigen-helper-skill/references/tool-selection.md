@@ -1,7 +1,9 @@
 ## Tool Selection
 
 - `kleinanzeigen_status`: check runtime availability, config wiring, workspace
-  mode, version, and supported commands without reading the config contents.
+  mode, versions, and supported commands without reading the config contents.
+  `pluginVersion` is the installed KleinClaw version (report this one);
+  `runtimeVersion`/`version` is the embedded miniclaw runtime.
 - `kleinanzeigen_list_ads`: discover configured local ad folders and return
   internal IDs, titles, Kleinanzeigen IDs, active state, and relative handles,
   plus ads without internal ID and duplicate internal IDs.

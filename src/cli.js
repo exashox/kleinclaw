@@ -3198,6 +3198,9 @@ export async function getKleinanzeigenStatus(config = {}) {
     cwd: cwd ? "[redacted-path]" : null,
     configFile,
     workspaceMode: normalizeWorkspaceMode(config.workspaceMode),
+    pluginVersion: await readPluginVersion(),
+    runtimeVersion: firstNonEmptyLine(versionText),
+    // Kept for compatibility: the embedded miniclaw runtime version, not the plugin version.
     version: firstNonEmptyLine(versionText),
     commands: commandSupportFromHelp(helpText),
     exitCode: helpResult?.exitCode ?? versionResult.exitCode,
@@ -3207,6 +3210,28 @@ export async function getKleinanzeigenStatus(config = {}) {
     stdout: "",
     stderr: versionResult.error || helpResult?.error ? firstNonEmptyLine(helpText || versionText) : "",
   };
+}
+
+let pluginVersionCache;
+
+/** Version of the installed KleinClaw plugin (package.json, manifest as fallback). */
+async function readPluginVersion() {
+  if (pluginVersionCache !== undefined) {
+    return pluginVersionCache;
+  }
+  pluginVersionCache = null;
+  for (const fileName of ["../package.json", "../openclaw.plugin.json"]) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(new URL(fileName, import.meta.url), "utf8"));
+      if (typeof parsed.version === "string" && parsed.version.trim()) {
+        pluginVersionCache = parsed.version.trim();
+        break;
+      }
+    } catch {
+      // try the next file
+    }
+  }
+  return pluginVersionCache;
 }
 
 const BROWSER_READ_MARKER = "KLEINCLAW_RESULT ";

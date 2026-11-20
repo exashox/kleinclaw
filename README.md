@@ -116,6 +116,10 @@ sandbox policy, not the install source. See [Configure](#configure) for the
 conditional grants. Those steps use `openclaw config file`, so they also work
 on the remaining inferior platforms :) .
 
+To check which KleinClaw version is running, ask the agent for
+`kleinanzeigen_status`: `pluginVersion` is the plugin version, `runtimeVersion`
+the embedded miniclaw runtime.
+
 ### Built-in skill
 
 The plugin ships a built-in `kleinanzeigen-helper-skill`, so agents get workflow

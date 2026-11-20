@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 - 2026-11-20
+
+- `kleinanzeigen_status`: `pluginVersion` reports the installed KleinClaw version,
+  `runtimeVersion` the embedded miniclaw runtime (`version` stays the runtime
+  version for compatibility)
+
 ## 0.5.1 - 2026-11-20
 
 - add `kleinanzeigen_sync`: compare up to 20 published ads with Kleinanzeigen in one
