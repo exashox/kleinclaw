@@ -78,7 +78,13 @@
         "type": "integer",
         "minimum": 1000,
         "maximum": 600000,
-        "description": "Maximum runtime for one miniclaw command."
+        "description": "Maximum runtime for one local miniclaw command (status, verify, reads)."
+      },
+      "liveTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 1800000,
+        "description": "Maximum runtime for one live browser run (publish, update, delete, download, extend, sync check). Defaults to 600000."
       },
       "maxOutputChars": {
         "type": "integer",

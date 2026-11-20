@@ -40,7 +40,8 @@ export class TimeoutConfig {
         this.loginDetection =
             input.loginDetection ?? input.login_detection ?? 12;
         this.publishingResult =
-            input.publishingResult ?? input.publishing_result ?? 300;
+            // Runs after the new ad ID is saved; only an informational check, so keep it short.
+            input.publishingResult ?? input.publishing_result ?? 20;
         this.publishingConfirmation =
             input.publishingConfirmation ?? input.publishing_confirmation ?? 20;
         this.imageUpload = input.imageUpload ?? input.image_upload ?? 30;

@@ -68,6 +68,10 @@ const USER_ACTION_HINT = [
   "Run it directly in a terminal/browser, finish that step, then retry this tool.",
 ].join(" ");
 const STATUS_TIMEOUT_MS = 15000;
+// Live runs start a browser, log in, upload images and wait for Kleinanzeigen;
+// killing them midway can leave a submitted ad without its saved ID.
+const DEFAULT_LIVE_TIMEOUT_MS = 600000;
+const MAX_LIVE_TIMEOUT_MS = 1800000;
 const STATUS_OUTPUT_CHARS = 3000;
 const AD_FILE_NAMES = ["ad.yaml", "ad.yml", "ad.json"];
 const DRAFT_AD_FILE_NAMES = ["ad.yaml", "ad.yml"];
@@ -443,6 +447,12 @@ export function resolveCliConfig(config = {}) {
     workspaceMode: normalizeWorkspaceMode(config.workspaceMode),
     lang: normalizeOptionalString(config.lang),
     timeoutMs: normalizePositiveInteger(config.timeoutMs, 120000, 1000, 600000),
+    liveTimeoutMs: normalizePositiveInteger(
+      config.liveTimeoutMs,
+      Math.max(normalizePositiveInteger(config.timeoutMs, 120000, 1000, 600000), DEFAULT_LIVE_TIMEOUT_MS),
+      1000,
+      MAX_LIVE_TIMEOUT_MS,
+    ),
     maxOutputChars: normalizePositiveInteger(config.maxOutputChars, 6000, 0, 20000),
     commandRunner: typeof config.commandRunner === "function" ? config.commandRunner : undefined,
   };
@@ -1696,6 +1706,7 @@ function buildOperationOutcome({ operation, result, rawText, beforeSnapshots, af
     };
   }
 
+  const uncertainPublication = result.timedOut && ["publish", "update"].includes(operation);
   return {
     success: false,
     status: result.timedOut ? "timed_out" : "failed",
@@ -1705,6 +1716,17 @@ function buildOperationOutcome({ operation, result, rawText, beforeSnapshots, af
     evidence: successEvidence,
     adIds: successIds,
     changedAdConfigs,
+    ...(uncertainPublication
+      ? {
+          uncertain: true,
+          nextActions: [
+            "do not run publish again for these ads yet: the ad may be online without its ID saved locally",
+            "ask the user to check 'Meine Anzeigen' on kleinanzeigen.de, or run kleinanzeigen_download with selector new to find ads missing locally",
+            "if the ad is online, record it with kleinanzeigen_set_ad_fields publishedAdId",
+            "raise the plugin setting liveTimeoutMs if live runs keep timing out",
+          ],
+        }
+      : {}),
   };
 }
 
@@ -4121,7 +4143,7 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
     args.push(`--download-dir=${downloadDir}`);
     const result = await runRuntimeProcess(cliConfig.runtime, args, {
       cwd: cliConfig.cwd,
-      timeoutMs: cliConfig.timeoutMs,
+      timeoutMs: cliConfig.liveTimeoutMs,
       maxBufferChars: cliConfig.maxOutputChars,
       env: buildChildEnv(),
       commandRunner: cliConfig.commandRunner,
@@ -4318,7 +4340,7 @@ export async function runKleinanzeigenOperation(operation, requestParams = {}, c
   args = buildKleinanzeigenArgs(operation, params, cliConfig);
   result = await runRuntimeProcess(cliConfig.runtime, args, {
     cwd: cliConfig.cwd,
-    timeoutMs: cliConfig.timeoutMs,
+    timeoutMs: OPERATIONS[operation]?.sideEffect ? cliConfig.liveTimeoutMs : cliConfig.timeoutMs,
     maxBufferChars: cliConfig.maxOutputChars,
     env: buildChildEnv(),
     commandRunner: cliConfig.commandRunner,

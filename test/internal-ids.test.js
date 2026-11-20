@@ -426,7 +426,84 @@ describe("online sync check", () => {
   });
 });
 
+describe("live run timeouts", () => {
+  it("gives live browser runs a longer timeout than local commands", async () => {
+    const { adRoot, config } = await workspace();
+    await writeAd(adRoot, "lamp", ["internal_id: 1", "active: true", "title: Schreibtischlampe Metall"]);
+    const seen = [];
+    const runner = async (argv, options) => {
+      seen.push([argv.find((arg) => ["verify", "publish"].includes(arg)), options.timeoutMs]);
+      return { stdout: "DONE: ok\n", stderr: "", code: 0, signal: null, termination: "exit" };
+    };
+
+    await runKleinanzeigenOperation("verify", {}, { ...config, commandRunner: runner });
+    await runKleinanzeigenOperation(
+      "publish",
+      { confirm: true, internalIds: [1], selector: "all" },
+      { ...config, commandRunner: runner },
+    );
+    await runKleinanzeigenOperation(
+      "publish",
+      { confirm: true, internalIds: [1], selector: "all" },
+      { ...config, liveTimeoutMs: 900000, commandRunner: runner },
+    );
+    assert.deepEqual(seen, [["verify", 120000], ["publish", 600000], ["publish", 900000]]);
+  });
+
+  it("marks a publish that timed out without saved ID as uncertain", async () => {
+    const { adRoot, config } = await workspace();
+    await writeAd(adRoot, "lamp", ["internal_id: 1", "active: true", "title: Schreibtischlampe Metall"]);
+    const result = await runKleinanzeigenOperation(
+      "publish",
+      { confirm: true, internalIds: [1], selector: "all" },
+      {
+        ...config,
+        commandRunner: async () => ({
+          stdout: "filling form\n",
+          stderr: "",
+          code: null,
+          signal: "SIGTERM",
+          termination: "timeout",
+        }),
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.outcome.status, "timed_out");
+    assert.equal(result.outcome.uncertain, true);
+    assert.match(result.outcome.nextActions[0], /do not run publish again/);
+  });
+
+  it("reports a timeout after the ID was saved as success", async () => {
+    const { adRoot, config } = await workspace();
+    const directory = await writeAd(adRoot, "lamp", [
+      "internal_id: 1",
+      "active: true",
+      "title: Schreibtischlampe Metall",
+    ]);
+    const result = await runKleinanzeigenOperation(
+      "publish",
+      { confirm: true, internalIds: [1], selector: "all" },
+      {
+        ...config,
+        commandRunner: async () => {
+          await fs.appendFile(path.join(directory, "ad.yaml"), "id: 3100000099\n", "utf8");
+          return { stdout: "", stderr: "", code: null, signal: "SIGTERM", termination: "timeout" };
+        },
+      },
+    );
+    assert.equal(result.outcome.success, true);
+    assert.equal(result.outcome.status, "succeeded_with_process_timeout");
+    assert.equal(result.outcome.uncertain, undefined);
+  });
+});
+
 describe("miniclaw defaults for stable references", () => {
+  it("waits only briefly for the review page after the ID is saved", async () => {
+    const { TimeoutConfig } = await import("../miniclaw/dist/model/timeout-config.js");
+    assert.equal(new TimeoutConfig({}).publishingResult, 20);
+    assert.equal(new TimeoutConfig({ publishing_result: 300 }).publishingResult, 300);
+  });
+
   it("does not delete other ads by title on republication unless configured", () => {
     assert.equal(new PublishingConfig({}).deleteOldAdsByTitle, false);
     assert.equal(new PublishingConfig({ delete_old_ads_by_title: true }).deleteOldAdsByTitle, true);
