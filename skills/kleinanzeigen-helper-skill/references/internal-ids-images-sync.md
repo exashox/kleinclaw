@@ -107,6 +107,11 @@ old and the new Kleinanzeigen ID (`previousId` in the outcome).
 - `conflict`: both sides changed. Show the differences and ask per field.
 - `not_found_online`: the ad may be deleted, expired, or paused. Ask before
   changing anything.
+- `deleted_online` / `sold_online`: the ad page in the logged-in browser marks
+  the ad as deleted or sold. Nothing was taken over. Ask the user to check the
+  ad under "Meine Anzeigen"; do not delete or republish on your own.
+- `onlineImagesUnreadable: true`: the gallery could not be read, so the images
+  were not compared. Do not tell the user the ad has no images online.
 - `not_checked` (with `partial: true`): the browser run hit its time limit
   before it reached these ads. Report what was checked and offer another sync
   with a smaller `maxAds`; do not call this a failure of those ads.

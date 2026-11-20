@@ -77,6 +77,7 @@ function fakeKleinanzeigen(onlineAds, calls = []) {
           `category: "${ad.category}"`,
           `price: ${ad.price}`,
           `price_type: ${ad.priceType ?? "NEGOTIABLE"}`,
+          ...(ad.extra ?? []),
           "images:",
           ...images.map((name) => `  - ${name}`),
           "",
@@ -217,6 +218,59 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.equal(byId[1].status, "download_failed");
     assert.match(byId[1].error, /iconlist-text/);
     assert.equal(byId[2].status, "in_sync");
+  });
+
+  it("does not mistake unreadable page parts or state labels for online edits", async () => {
+    const { adRoot, config } = await workspace();
+    const ad = async (name, internalId, id, title, category) => {
+      const directory = await writeAd(adRoot, name, [
+        `internal_id: ${internalId}`,
+        "active: true",
+        `id: ${id}`,
+        `title: "${title}"`,
+        'description: "Gut erhalten."',
+        `category: "${category}"`,
+        "price: 60",
+        "price_type: NEGOTIABLE",
+        "shipping_type: PICKUP",
+        "sell_directly: false",
+        "images:",
+        '  - "1.jpg"',
+        '  - "2.jpg"',
+      ]);
+      await fs.writeFile(path.join(directory, "1.jpg"), `front ${name}`);
+      await fs.writeFile(path.join(directory, "2.jpg"), `back ${name}`);
+      await markPublished(directory);
+      return directory;
+    };
+    const ram = await ad("ram", 6, "3571107447", "Corsair Vengeance LPX 16GB", "Elektronik > PC-Zubehör & Software > Speicher");
+    const ford = await ad("ford", 3, "3568173226", "Ford Fiesta Quertraverse", "Auto, Rad & Boot > Autoteile & Reifen > Ersatz- & Reparaturteile");
+    const unreadable = ["shipping_type: NOT_APPLICABLE", "sell_directly: null"];
+    const online = {
+      3571107447: {
+        title: "Gelöscht • Corsair Vengeance LPX 16GB", description: "Gut erhalten.",
+        category: "161/225", price: 60, images: [], extra: unreadable,
+      },
+      3568173226: {
+        title: "Ford Fiesta Quertraverse", description: "Gut erhalten.",
+        category: "210/223", price: 60, images: [], extra: unreadable,
+      },
+    };
+    const before = await fs.readFile(path.join(ford, "ad.yaml"), "utf8");
+    const result = await syncKleinanzeigenAds({ confirm: true }, { ...config, commandRunner: fakeKleinanzeigen(online) });
+    const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry]));
+
+    assert.equal(byId[6].status, "deleted_online");
+    assert.equal(byId[3].status, "in_sync");
+    assert.equal(byId[3].onlineImagesUnreadable, true);
+    assert.equal(byId[3].differences, undefined);
+    const fordAfter = await readAd(ford);
+    assert.deepEqual(fordAfter.images, ["1.jpg", "2.jpg"], "local images stay");
+    assert.equal(fordAfter.category, "Auto, Rad & Boot > Autoteile & Reifen > Ersatz- & Reparaturteile");
+    assert.equal(fordAfter.shipping_type, "PICKUP");
+    assert.notEqual(await fs.readFile(path.join(ford, "ad.yaml"), "utf8"), before, "sync state is recorded");
+    assert.equal((await readAd(ram)).title, "Corsair Vengeance LPX 16GB", "nothing taken over from a deleted page");
+    assert.ok(result.nextActions.some((action) => /Meine Anzeigen/.test(action)));
   });
 
   it("stops the browser before the call budget and reports a partial result", async () => {

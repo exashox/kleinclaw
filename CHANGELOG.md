@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.7 - 2026-11-20
+
+- `kleinanzeigen_sync` / `kleinanzeigen_sync_check`: fields that could not be
+  read online (shipping `NOT_APPLICABLE`, empty `sell_directly`, no images) are
+  no longer reported as online edits; before, a dry run proposed to overwrite
+  the local category and shipping type with these placeholder values
+- sync: a category ID without its third level (`210/223`) matches the local
+  category `... > Ersatz- & Reparaturteile` (`210/223/ersatz_reparaturteile`)
+- sync: `Gelöscht •` / `Verkauft •` in front of the online title gives
+  `deleted_online` / `sold_online` and nothing is taken over; `Reserviert •` is
+  ignored for the comparison (`reserved: true`); a title taken over never
+  keeps the label
+- miniclaw download: the security overlay on the ad page is probed briefly
+  instead of waiting about 24 seconds on every ad
+
 ## 0.5.6 - 2026-11-20
 
 - miniclaw download: the creation date is read best effort; when neither the

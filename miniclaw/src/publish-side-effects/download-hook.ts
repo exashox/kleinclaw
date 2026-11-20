@@ -12,6 +12,7 @@ import {
   type DownloadAdContext,
   type NavigateToAdPageHook,
 } from "../download-orchestration.js";
+import { elementPresent } from "../download-extractor/probe.js";
 import { type Config } from "../model/config-model.js";
 import {
   By,
@@ -42,8 +43,12 @@ export async function navigateToDownloadedAdPage(
     return false;
   }
 
+  // The security overlay shows up only now and then; probe it briefly
+  // instead of waiting through every retry on each ad.
+  if (!(await elementPresent(controller, By.ID, "vap-ovrly-secure"))) {
+    return true;
+  }
   try {
-    await controller.webFind(By.ID, "vap-ovrly-secure");
     await controller.webClick(By.CLASS_NAME, "mfp-close");
     await controller.webSleep();
   } catch (error) {

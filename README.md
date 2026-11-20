@@ -472,6 +472,15 @@ page could not be read as `download_failed` with the reason. When the call
 passes `timeoutMs`, the browser run stops 60 seconds earlier, so the agent still
 gets the ads read so far (`partial: true`); the ads it did not reach are
 `not_checked`.
+
+Fields that could not be read online (shipping shown as `NOT_APPLICABLE`, an
+empty `sell_directly`, no images at all) are not compared, so a changed page
+layout never looks like an online edit (`onlineImagesUnreadable: true` marks
+the image case). A category ID without its third level (`210/223`) matches the
+more specific local category. When the page puts `Gelöscht •` or `Verkauft •`
+in front of the title, the ad is reported as `deleted_online` or `sold_online`
+and nothing is taken over; `Reserviert •` is ignored for the comparison and
+reported as `reserved: true`.
 `dryRun: true` only reports (`would_pull`). Run it on a schedule, for example
 once a day with an OpenClaw cron job that asks the agent to sync and report.
 

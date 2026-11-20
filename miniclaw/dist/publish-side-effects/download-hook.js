@@ -4,6 +4,7 @@
  * SPDX-ArtifactOfProjectHomePage: https://github.com/Second-Hand-Friends/kleinanzeigen-bot/
  */
 import { DownloadAdExtractor, } from "../download-extractor.js";
+import { elementPresent } from "../download-extractor/probe.js";
 import { By, TimeoutError, } from "../web-primitives.js";
 export async function navigateToDownloadedAdPage(controller, rootUrl, context) {
     const pageUrl = context.adUrl ??
@@ -13,8 +14,12 @@ export async function navigateToDownloadedAdPage(controller, rootUrl, context) {
     if (controller.page?.url?.endsWith("k0")) {
         return false;
     }
+    // The security overlay shows up only now and then; probe it briefly
+    // instead of waiting through every retry on each ad.
+    if (!(await elementPresent(controller, By.ID, "vap-ovrly-secure"))) {
+        return true;
+    }
     try {
-        await controller.webFind(By.ID, "vap-ovrly-secure");
         await controller.webClick(By.CLASS_NAME, "mfp-close");
         await controller.webSleep();
     }

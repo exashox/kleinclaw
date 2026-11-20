@@ -4425,7 +4425,7 @@ function syncComparable(field, value, local, builtinCategories) {
     return null;
   }
   if (field === "title") {
-    return normalizeSyncText(value);
+    return normalizeSyncText(String(value).replace(ONLINE_TITLE_LABEL_RE, ""));
   }
   if (field === "description") {
     let text = String(value).trim();
@@ -4469,15 +4469,54 @@ function syncPreview(value) {
   return text.length > 300 ? `${text.slice(0, 297)}...` : text;
 }
 
+// Kleinanzeigen puts a state label in front of the title, e.g. "Gelöscht • Lampe".
+const ONLINE_TITLE_LABEL_RE = /^\s*(Gelöscht|Reserviert|Verkauft)\s*[•·-]\s*/i;
+
+function onlineTitleLabel(title) {
+  const match = ONLINE_TITLE_LABEL_RE.exec(String(title ?? ""));
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** Category IDs match when one is a more specific form of the other ("210/223" vs "210/223/x"). */
+function sameCategory(left, right) {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  const leftParts = String(left).split("/");
+  const rightParts = String(right).split("/");
+  const common = Math.min(leftParts.length, rightParts.length);
+  return common >= 2 && leftParts.slice(0, common).join("/") === rightParts.slice(0, common).join("/");
+}
+
+/**
+ * True when the downloaded value says "could not be read" rather than a real
+ * online value. Such fields are not compared, so a page layout change never
+ * shows up as an online edit.
+ */
+function onlineValueUnknown(field, online) {
+  const value = online[field];
+  if (value === undefined || value === null || value === "") {
+    return !SYNC_CORE_FIELDS.includes(field);
+  }
+  if (["shipping_type", "shipping_costs", "shipping_options"].includes(field)) {
+    return online.shipping_type === "NOT_APPLICABLE";
+  }
+  return false;
+}
+
 function compareWithOnline(local, online, builtinCategories) {
   const differences = [];
   for (const field of SYNC_FIELDS) {
     if (!SYNC_CORE_FIELDS.includes(field) && local[field] === undefined) {
       continue; // Not set locally: config defaults apply, no meaningful comparison.
     }
+    if (onlineValueUnknown(field, online)) {
+      continue;
+    }
     const localValue = syncComparable(field, local[field], local, builtinCategories);
     const onlineValue = syncComparable(field, online[field], local, builtinCategories);
-    if (JSON.stringify(localValue) !== JSON.stringify(onlineValue)) {
+    if (field === "category" ? !sameCategory(localValue, onlineValue)
+      : JSON.stringify(localValue) !== JSON.stringify(onlineValue)) {
       differences.push({
         field,
         local: syncPreview(local[field]),
@@ -4566,6 +4605,9 @@ async function assessAgainstOnline(adConfigPath, onlineEntry, { hashing, builtin
   const differences = compareWithOnline(local, online, builtinCategories);
   const localImages = await resolveAdImageFiles(adConfigPath, summary.imageGlobs).catch(() => []);
   const onlineImages = Array.isArray(online.images) ? online.images.map(String) : [];
+  // An ad without any image online is far more likely an unreadable gallery
+  // than a real edit; never treat it as "the user removed all images".
+  const onlineImagesUnknown = onlineImages.length === 0 && localImages.length > 0;
   const storedContentHash = typeof local.content_hash === "string" ? local.content_hash : "";
   return {
     local,
@@ -4574,7 +4616,9 @@ async function assessAgainstOnline(adConfigPath, onlineEntry, { hashing, builtin
     differences,
     localImages,
     onlineImages,
-    imageCountDiffers: localImages.length !== onlineImages.length,
+    onlineImagesUnknown,
+    onlineLabel: onlineTitleLabel(online.title),
+    imageCountDiffers: !onlineImagesUnknown && localImages.length !== onlineImages.length,
     localChanged: !storedContentHash || hashing.contentHashForAd(local) !== storedContentHash,
     onlineHash: onlineStateHash(online, local, builtinCategories),
     storedOnlineHash: typeof local[ONLINE_HASH_KEY] === "string" ? local[ONLINE_HASH_KEY] : null,
@@ -4592,7 +4636,10 @@ async function applyOnlineVersion(adConfigPath, assessment, onlineEntry, { field
     ) {
       continue;
     }
-    text = replaceTopLevelYamlEntry(text, field, yamlLinesForEntry(field, assessment.online[field]));
+    const value = field === "title"
+      ? String(assessment.online.title).replace(ONLINE_TITLE_LABEL_RE, "")
+      : assessment.online[field];
+    text = replaceTopLevelYamlEntry(text, field, yamlLinesForEntry(field, value));
     applied.push(field);
   }
   const importedImages = [];
@@ -4729,6 +4776,20 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}, { now =
     }
     const context = { hashing: download.hashing, builtinCategories: await loadBuiltinCategories() };
     const assessment = await assessAgainstOnline(adConfigPath, onlineEntry, context);
+    if (assessment.onlineLabel === "gelöscht" || assessment.onlineLabel === "verkauft") {
+      return {
+        ok: true,
+        ...base,
+        status: assessment.onlineLabel === "gelöscht" ? "deleted_online" : "sold_online",
+        applied: [],
+        changed: false,
+        nextActions: [
+          "the ad page marks the ad as deleted or sold; nothing was taken over. " +
+            "Ask the user to check the ad under 'Meine Anzeigen'",
+        ],
+        ...localSuccessProcessFields(),
+      };
+    }
     const outcome = await applyOnlineVersion(adConfigPath, assessment, onlineEntry, {
       fields: apply,
       images: applyImages,
@@ -4753,8 +4814,10 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}, { now =
         local: assessment.localImages.length,
         online: assessment.onlineImages.length,
         countDiffers: assessment.imageCountDiffers,
+        ...(assessment.onlineImagesUnknown ? { onlineUnreadable: true } : {}),
         note: "online images are re-encoded by Kleinanzeigen, so only the count is compared",
       },
+      ...(assessment.onlineLabel ? { onlineLabel: assessment.onlineLabel } : {}),
       applied: outcome.applied,
       importedImages: outcome.importedImages,
       changed: outcome.changed,
@@ -4864,6 +4927,16 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
       }
       const assessment = await assessAgainstOnline(ad.adConfigPath, onlineEntry, context);
       const differs = assessment.differences.length > 0 || assessment.imageCountDiffers;
+      const unreadable = assessment.onlineImagesUnknown ? { onlineImagesUnreadable: true } : {};
+      if (assessment.onlineLabel === "gelöscht" || assessment.onlineLabel === "verkauft") {
+        // Nothing is taken over from a page that marks the ad as gone.
+        results.push({
+          ...reference,
+          status: assessment.onlineLabel === "gelöscht" ? "deleted_online" : "sold_online",
+          onlineTitle: sanitizeText(String(assessment.online.title ?? ""), redactions, 200),
+        });
+        continue;
+      }
       let status;
       if (!differs) {
         status = "in_sync";
@@ -4878,6 +4951,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
       const entry = {
         ...reference,
         status,
+        ...(assessment.onlineLabel === "reserviert" ? { reserved: true } : {}),
+        ...unreadable,
         ...(differs ? { differences: assessment.differences } : {}),
         ...(assessment.imageCountDiffers
           ? { images: { local: assessment.localImages.length, online: assessment.onlineImages.length } }
@@ -4936,6 +5011,18 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     if (counts.not_found_online) {
       nextActions.push(
         "not_found_online ads may be deleted, expired or paused; ask the user before changing them",
+      );
+    }
+    if (counts.deleted_online || counts.sold_online) {
+      nextActions.push(
+        "deleted_online / sold_online: the ad page in the logged-in browser marks the ad as " +
+          "deleted or sold; nothing was taken over. Ask the user to check the ad under " +
+          "'Meine Anzeigen' before changing anything",
+      );
+    }
+    if (results.some((entry) => entry.onlineImagesUnreadable)) {
+      nextActions.push(
+        "onlineImagesUnreadable: the gallery could not be read, so images were not compared",
       );
     }
     if (counts.not_checked) {
