@@ -46,11 +46,40 @@ buyer wants to see them:
 Drop near-duplicates and blurry shots, and tell the user which ones you left out.
 Kleinanzeigen shows at most 20 images.
 
-Then call `kleinanzeigen_set_ad_images` with the files in that order and show
-the user the order (one line per image with a short reason). The tool copies
-photos from an inbox folder under `adRoots` into the ad folder; it keeps
-unlisted files on disk. Only `.jpg`, `.jpeg`, `.png`, and `.gif` are accepted;
-ask the user to convert other formats.
+Before you order, read `kleinanzeigen_image_preferences` (with `category` when
+the item type is clear). Its `guidance` and `rules` come from the user's past
+corrections and override the general order above.
+
+Then:
+
+1. Call `kleinanzeigen_set_ad_images` with the files in your order,
+   `orderSource: "agent"`, and an `assessments` entry per image (role, quality
+   1-5, short note).
+2. Show the user the order: one line per image with role and reason.
+3. When the user approves or changes it, call `kleinanzeigen_set_ad_images`
+   again with the final order and `orderSource: "user"`. Do this also when
+   nothing changed: an approval is a learning signal too.
+4. When the user states a general wish ("never a detail as cover"), store it
+   with `kleinanzeigen_image_preferences` `action: "add_rule"` after asking.
+
+The tool moves photos from an inbox folder under `adRoots` into the ad folder
+and lists byte-identical photos only once (`skippedDuplicates`). Mention
+skipped duplicates to the user. Only `.jpg`, `.jpeg`, `.png`, and `.gif` are
+accepted; ask the user to convert other formats.
+
+### Keeping storage small
+
+- Photos the user sends go into the inbox folder first. Assign them to an
+  internal ID soon; `kleinanzeigen_set_ad_images` moves them into the ad folder.
+- When photos cannot be assigned to any ad, ask the user. If they are not
+  needed, leave them: `kleinanzeigen_storage_cleanup` moves them to the trash
+  after `minAgeDays`.
+- Run `kleinanzeigen_storage_cleanup` without `apply` about once a week (or
+  when the user asks), show the summary (counts, megabytes, duplicates), and
+  apply it only after the user agrees. Trash is purged after
+  `trashRetentionDays`.
+- Report `duplicatesInAd` (the same photo twice in one ad) and offer to fix the
+  image list.
 
 ### Changing a published ad
 
@@ -67,7 +96,21 @@ appear as new. That creates a new Kleinanzeigen ID; KleinClaw stores it in the
 same `ad.yaml`, so the internal ID keeps pointing to the right ad. Report the
 old and the new Kleinanzeigen ID (`previousId` in the outcome).
 
-### When the user edited the ad on kleinanzeigen.de
+### Sync with kleinanzeigen.de
+
+- `kleinanzeigen_sync` checks up to 20 published ads in one browser run and
+  takes over online edits automatically when the local ad is unchanged
+  (`pulled`). Report per ad: internal ID, title, status, and what was taken
+  over.
+- `local_ahead`: local edits not online yet; offer a scoped
+  `kleinanzeigen_update`.
+- `conflict`: both sides changed. Show the differences and ask per field.
+- `not_found_online`: the ad may be deleted, expired, or paused. Ask before
+  changing anything.
+- When the user wants a daily sync, suggest an OpenClaw cron job that asks you
+  to run `kleinanzeigen_sync` and report; do not loop it yourself.
+
+### When the user edited one ad on kleinanzeigen.de
 
 - Run `kleinanzeigen_sync_check` for that ad (needs approval: it opens the live
   browser) and show the `differences` and the image counts.

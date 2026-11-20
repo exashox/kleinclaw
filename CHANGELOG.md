@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 - 2026-11-20
+
+- add `kleinanzeigen_sync`: compare up to 20 published ads with Kleinanzeigen in one
+  browser run; online changes are taken over locally when the local ad is
+  unchanged since the last publish or sync, local changes are reported as
+  `local_ahead`, changes on both sides as `conflict`; `online_hash` and
+  `last_synced_on` in `ad.yaml` remember the last live state (excluded from the
+  content hash)
+- add `kleinanzeigen_storage_cleanup`: report or move images that belong to no
+  ad, byte-identical duplicates, and leftover temporary folders to
+  `<adRoot>/.kleinclaw/trash/<date>`; purge the trash after a retention time
+- `kleinanzeigen_set_ad_images`: moves inbox photos instead of copying them
+  (`keepSource` keeps them), skips byte-identical duplicates, reuses an identical
+  file already in the ad folder, and records `assessments` and `orderSource`
+- add `kleinanzeigen_image_preferences`: learns the user's preferred image order
+  from approved and corrected proposals, plus explicit image rules
 
 - live browser runs (publish, update, delete, download, extend, sync check) use
   the new plugin setting `liveTimeoutMs` (default 10 minutes) instead of the

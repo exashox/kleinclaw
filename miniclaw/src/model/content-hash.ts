@@ -40,6 +40,10 @@ const METADATA_FIELDS = new Set([
   // Local KleinClaw reference; never part of the listing content.
   "internal_id",
   "internalId",
+  "online_hash",
+  "onlineHash",
+  "last_synced_on",
+  "lastSyncedOn",
 ]);
 
 function hashFloat(value: number | null): HashFloatValue | null {

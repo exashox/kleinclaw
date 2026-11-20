@@ -215,7 +215,7 @@ describe("kleinanzeigen plugin tools", () => {
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_browser_configure"), true);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_draft_ad"), true);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_set_ad_active"), true);
-    assert.equal(tools.length, 25);
+    assert.equal(tools.length, 28);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_find_ad"), false);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_categories"), false);
     assert.equal(SIDE_EFFECT_TOOL_NAMES.has("kleinanzeigen_market_search"), false);
@@ -230,6 +230,9 @@ describe("kleinanzeigen plugin tools", () => {
         "kleinanzeigen_set_ad_images",
         "kleinanzeigen_assign_internal_ids",
         "kleinanzeigen_sync_check",
+        "kleinanzeigen_sync",
+        "kleinanzeigen_storage_cleanup",
+        "kleinanzeigen_image_preferences",
         "kleinanzeigen_send_message",
         "kleinanzeigen_publish",
         "kleinanzeigen_update",

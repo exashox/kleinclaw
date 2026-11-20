@@ -38,6 +38,13 @@
   `negotiationNotes` store the user's negotiation limits next to the ad.
 - `kleinanzeigen_set_ad_images`: set the images of one ad in display order
   (first = cover); copies photos from an inbox folder under `adRoots`.
+- `kleinanzeigen_sync`: compare up to 20 published ads with Kleinanzeigen in
+  one browser run; takes over online edits where the local ad is unchanged and
+  reports `local_ahead` and `conflict` ads.
+- `kleinanzeigen_storage_cleanup`: report, then (after confirmation) move
+  unassigned and duplicate images to the trash and remove temporary folders.
+- `kleinanzeigen_image_preferences`: what was learned about the user's image
+  order; read it before proposing an order; manage the user's image rules.
 - `kleinanzeigen_sync_check`: download one published ad temporarily and
   compare it with the local `ad.yaml`; `apply`/`applyImages` take over the
   online version. Opens the live browser, changes nothing online.
