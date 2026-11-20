@@ -70,6 +70,12 @@ export declare class DownloadAdExtractor {
     extractSellDirectlyFromAdPage(): Promise<boolean | null>;
     extractContactFromAdPage(): Promise<ContactInput>;
     extractAdPageInfo(directory: string, adId: number, adFileStem: string, options?: DownloadAdOptions): Promise<AdInput>;
+    /**
+     * Reads the creation date best effort. Its position on the page changes with
+     * every layout update, and the date is metadata only (not part of the content
+     * hash), so a missing date must not fail the download.
+     */
+    extractCreationDateFromAdPage(): Promise<string | null>;
     extractAdPageInfoWithDirectoryHandling(relativeDirectory: string, adId: number, options?: DownloadAdOptions): Promise<ExtractAdPageInfoResult>;
     downloadAd(adId: number, options?: DownloadAdOptions): Promise<void>;
 }

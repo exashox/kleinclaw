@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6 - 2026-11-20
+
+- miniclaw download: the creation date is read best effort; when neither the
+  old XPath nor `#viewad-extra-info > div:nth-child(1) > span:nth-child(2)`
+  exists, the first German date in `#viewad-extra-info` is used, otherwise
+  `created_on` stays empty instead of failing the download
+
 ## 0.5.5 - 2026-11-20
 
 - miniclaw download: optional fields on the ad page (street, phone, contact

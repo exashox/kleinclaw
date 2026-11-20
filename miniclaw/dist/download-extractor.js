@@ -135,26 +135,55 @@ export class DownloadAdExtractor {
         info.images = await this.downloadImagesFromAdPage(directory, adFileStem);
         info.contact = await this.extractContactFromAdPage();
         info.id = adId;
-        const creationDateXpath = "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
-            "article/div[3]/div[2]/div[2]/div[1]/span";
-        let creationDate;
-        try {
-            // The absolute XPath breaks with every layout change; probe it briefly.
-            if (!(await elementPresent(this.controller, By.XPATH, creationDateXpath))) {
-                throw new TimeoutError("Creation date XPath not present");
-            }
-            creationDate = await this.controller.webText(By.XPATH, creationDateXpath);
-        }
-        catch (error) {
-            if (!(error instanceof TimeoutError)) {
-                throw error;
-            }
-            creationDate = await this.controller.webText(By.CSS_SELECTOR, "#viewad-extra-info > div:nth-child(1) > span:nth-child(2)");
-        }
-        info.created_on = parseGermanCreationDate(creationDate);
+        info.created_on = await this.extractCreationDateFromAdPage();
         info.updated_on = null;
         info.content_hash = contentHashForLoadedAd(toAd(info, this.config.adDefaults));
         return info;
+    }
+    /**
+     * Reads the creation date best effort. Its position on the page changes with
+     * every layout update, and the date is metadata only (not part of the content
+     * hash), so a missing date must not fail the download.
+     */
+    async extractCreationDateFromAdPage() {
+        const selectors = [
+            [
+                By.XPATH,
+                "/html/body/div[1]/div[2]/div/section[2]/section/section/" +
+                    "article/div[3]/div[2]/div[2]/div[1]/span",
+            ],
+            [By.CSS_SELECTOR, "#viewad-extra-info > div:nth-child(1) > span:nth-child(2)"],
+        ];
+        const candidates = [];
+        for (const [type, value] of selectors) {
+            if (!(await elementPresent(this.controller, type, value))) {
+                continue;
+            }
+            try {
+                candidates.push(await this.controller.webText(type, value));
+            }
+            catch (error) {
+                if (!(error instanceof TimeoutError)) {
+                    throw error;
+                }
+            }
+        }
+        // Fallback: the first German date in the extra-info box, wherever it sits now.
+        const extraInfo = await this.controller.webExecute("document.querySelector('#viewad-extra-info')?.innerText ?? ''").catch(() => "");
+        candidates.push(String(extraInfo ?? ""));
+        for (const candidate of candidates) {
+            const match = /\b(\d{2}\.\d{2}\.\d{4})\b/.exec(candidate);
+            if (!match) {
+                continue;
+            }
+            try {
+                return parseGermanCreationDate(match[1]);
+            }
+            catch {
+                continue;
+            }
+        }
+        return null;
     }
     async extractAdPageInfoWithDirectoryHandling(relativeDirectory, adId, options = {}) {
         const title = await this.extractTitleFromAdPage();

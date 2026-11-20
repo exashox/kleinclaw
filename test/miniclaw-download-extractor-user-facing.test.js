@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { Config } from "../miniclaw/dist/model/config-model.js";
+import { DownloadAdExtractor } from "../miniclaw/dist/download-extractor.js";
 import {
   extractCategoryFromAdPage,
   extractSpecialAttributesFromAdPage,
@@ -311,6 +312,28 @@ describe("miniclaw download contact and classification", () => {
     );
     // Only fields that exist are read with the regular (retrying) lookup.
     assert.deepEqual(slowLookups, [key(By.ID, "viewad-locality"), key(By.ID, "viewad-contact")]);
+  });
+
+  it("reads the creation date best effort when the old selectors are gone", async () => {
+    const extractorFor = (extraInfo) => new DownloadAdExtractor({
+      config: new Config({}),
+      downloadDir: os.tmpdir(),
+      controller: {
+        ...createController(),
+        async webProbe() {
+          return null;
+        },
+        async webExecute() {
+          return extraInfo;
+        },
+      },
+    });
+    assert.equal(
+      await extractorFor("Anzeigen-ID 3571107447\nErstellt am 03.11.2026\n42 Besucher")
+        .extractCreationDateFromAdPage(),
+      "2026-11-03T00:00:00",
+    );
+    assert.equal(await extractorFor("").extractCreationDateFromAdPage(), null);
   });
 
   it("uses published-ad metadata for sell-directly and category breadcrumbs", async () => {
