@@ -405,10 +405,26 @@ marks an ad as changed.
 
 `kleinanzeigen_set_ad_images` writes the `images` list of one ad in the given
 order; the first image is the cover. Files from elsewhere under `adRoots` (for
-example an `inbox` folder) are copied into the ad folder. Files that are no
-longer listed stay on disk and are returned as `unlistedImages`. A glob such as
-`*.jpg` sorts alphabetically, so explicit file names are the reliable way to
-control the order.
+example an `inbox` folder) are moved into the ad folder (`keepSource: true`
+copies instead). Byte-identical photos are listed only once
+(`skippedDuplicates`), and a photo that already exists in the ad folder under
+another name is reused. Files that are no longer listed stay on disk and are
+returned as `unlistedImages`. A glob such as `*.jpg` sorts alphabetically, so
+explicit file names are the reliable way to control the order.
+
+#### Learning the image order
+
+The agent passes its `assessments` (role such as `overview`, `detail`, `defect`,
+and a quality from 1 to 5) with its proposal (`orderSource: "agent"`). After the
+user approved or corrected the order, it calls `kleinanzeigen_set_ad_images`
+again with `orderSource: "user"`. KleinClaw stores both orders in
+`<first adRoot>/.kleinclaw/image-preferences.json`.
+`kleinanzeigen_image_preferences` turns that history into guidance: the usual
+cover role, the average position per role, which roles the user moves earlier or
+later than proposed, recent corrections, and the user's explicit rules
+(`add_rule`, `remove_rule`). `category` limits the learning to similar items.
+The agent reads it before every new proposal, so its proposals follow the
+user's taste more closely over time.
 
 Before publish and update, KleinClaw stores an `images_fingerprint` of the
 image files in `ad.yaml`. Replacing a photo under the same file name therefore
@@ -426,6 +442,43 @@ kleinanzeigen.de by hand. `apply` takes over selected online fields,
 (`online-NN.jpg`). When everything is taken over, the content hash is updated so
 the next `update` does not resend the same content. The check opens the live
 browser but changes nothing on Kleinanzeigen.
+
+#### Two-way sync
+
+`kleinanzeigen_sync` checks up to 20 published ads in one browser run, the ones
+synced longest ago first. `online_hash` and `last_synced_on` in `ad.yaml`
+remember the live state of the last sync; both are excluded from the content
+hash. Per ad it decides:
+
+| Local since last publish/sync | Online since last sync | Result |
+| --- | --- | --- |
+| unchanged | changed | `pulled`: online version taken over locally, including images |
+| changed | unchanged | `local_ahead`: offer a scoped `kleinanzeigen_update` |
+| changed | changed | `conflict`: nothing written, the user decides per field |
+| any | equal | `in_sync` |
+
+Ads that are not online any more are reported as `not_found_online`.
+`dryRun: true` only reports (`would_pull`). Run it on a schedule, for example
+once a day with an OpenClaw cron job that asks the agent to sync and report.
+
+#### Storage cleanup
+
+`kleinanzeigen_storage_cleanup` keeps `adRoots` small. It finds:
+
+- `unassigned`: images outside any ad folder (for example in the inbox) that no
+  ad uses, older than `minAgeDays` (default 7);
+- `unlisted_in_ad`: images in an ad folder that the ad no longer lists, older
+  than `minAgeDays`;
+- `duplicate`: byte-identical copies of another image, regardless of age;
+- `temporary`: leftover `.kleinclaw-sync-*`, `.tmp-*`, `.bak-*` folders and
+  temporary configs older than one hour;
+- `expired_trash`: trash folders older than `trashRetentionDays` (default 14).
+
+Without `apply` it only reports. With `apply: true` and `confirm: true` it
+moves images to `<adRoot>/.kleinclaw/trash/<date>/` (recoverable until the
+retention time), deletes temporary folders and empty subfolders, and purges
+expired trash. Images used by an ad are never touched. Duplicates that two ads
+or one ad use are only reported (`sharedDuplicates`, `duplicatesInAd`).
 
 #### Republication and title matches
 

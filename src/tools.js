@@ -4,12 +4,14 @@ import {
   assignKleinanzeigenInternalIds,
   buildRedactions,
   checkKleinanzeigenBrowser,
+  cleanupKleinanzeigenStorage,
   configureKleinanzeigenBrowser,
   draftKleinanzeigenAd,
   findKleinanzeigenAd,
   getKleinanzeigenAdSchema,
   getKleinanzeigenBrowserStatus,
   getKleinanzeigenStatus,
+  kleinanzeigenImagePreferences,
   listKleinanzeigenImages,
   listKleinanzeigenAds,
   readKleinanzeigenAd,
@@ -23,6 +25,7 @@ import {
   setKleinanzeigenAdFields,
   setKleinanzeigenAdImages,
   syncCheckKleinanzeigenAd,
+  syncKleinanzeigenAds,
 } from "./cli.js";
 
 export const SIDE_EFFECT_TOOL_NAMES = new Set([
@@ -38,6 +41,9 @@ export const SIDE_EFFECT_TOOL_NAMES = new Set([
   "kleinanzeigen_set_ad_images",
   "kleinanzeigen_assign_internal_ids",
   "kleinanzeigen_sync_check",
+  "kleinanzeigen_sync",
+  "kleinanzeigen_storage_cleanup",
+  "kleinanzeigen_image_preferences",
   "kleinanzeigen_send_message",
 ]);
 
@@ -176,6 +182,23 @@ export function buildKleinanzeigenApprovalDescription({ toolName, params = {}, c
         120,
       )}`,
     );
+  }
+  if (operation === "set_ad_images" && typeof params.orderSource === "string") {
+    lines.push(`Order from: ${params.orderSource === "user" ? "user (recorded for learning)" : "agent proposal"}`);
+  }
+  if (operation === "sync") {
+    lines.push("Opens the live browser and downloads the selected ads to compare them");
+    lines.push(params.dryRun === true
+      ? "Dry run: nothing is changed locally"
+      : "Online changes are taken over locally where the local ad is unchanged");
+  }
+  if (operation === "storage_cleanup") {
+    lines.push(params.apply === true
+      ? "Moves unassigned and duplicate images to .kleinclaw/trash, deletes temp folders"
+      : "Report only: nothing is moved");
+  }
+  if (operation === "image_preferences" && typeof params.rule === "string") {
+    lines.push(`Image rule: ${truncateText(params.rule, 100)}`);
   }
   if (operation === "sync_check") {
     lines.push("Opens the live browser and downloads this ad to compare it");
@@ -987,10 +1010,10 @@ function setAdImagesTool(config) {
     name: "kleinanzeigen_set_ad_images",
     label: "Kleinanzeigen Set Ad Images",
     description:
-      "Set the images of one YAML ad in display order. The first image is the cover. Files " +
-      "outside the ad directory (but inside adRoots, e.g. an inbox folder) are copied into " +
-      "it. Unlisted files stay on disk. Local only: run kleinanzeigen_update afterwards for " +
-      "a published ad.",
+      "Set the images of one YAML ad in display order. The first image is the cover. Photos " +
+      "from elsewhere under adRoots (e.g. an inbox folder) are moved into the ad folder; " +
+      "byte-identical duplicates are skipped. Read kleinanzeigen_image_preferences first. " +
+      "Local only: run kleinanzeigen_update afterwards for a published ad.",
     parameters: objectSchema(
       {
         confirm: confirmSchema,
@@ -1003,6 +1026,50 @@ function setAdImagesTool(config) {
           description:
             "Image files in display order: names relative to the ad directory, paths " +
             "relative to an adRoot, or absolute paths inside adRoots. .jpg/.jpeg/.png/.gif.",
+        },
+        assessments: {
+          type: "array",
+          maxItems: 20,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              image: { type: "string", description: "Image as listed in images." },
+              role: {
+                type: "string",
+                enum: [
+                  "overview",
+                  "angle",
+                  "detail",
+                  "label",
+                  "defect",
+                  "accessory",
+                  "scale",
+                  "packaging",
+                  "other",
+                ],
+              },
+              quality: { type: "integer", minimum: 1, maximum: 5 },
+              note: { type: "string", maxLength: 200 },
+            },
+            required: ["image", "role"],
+          },
+          description:
+            "Your assessment per image (role and quality 1-5). Stored for learning the " +
+            "user's preferred order.",
+        },
+        orderSource: {
+          type: "string",
+          enum: ["agent", "user"],
+          description:
+            "agent (default): your proposal. user: the order the user approved or " +
+            "corrected; KleinClaw records the difference to your proposal.",
+        },
+        keepSource: {
+          type: "boolean",
+          description:
+            "Keep inbox photos after copying them into the ad folder. Defaults to false " +
+            "(they are moved, so no unassigned copies remain).",
         },
       },
       ["confirm", "images"],
@@ -1059,6 +1126,108 @@ function syncCheckTool(config) {
     operation: "sync_check",
     needsUserAction: true,
     handler: (toolConfig, params) => syncCheckKleinanzeigenAd(params, toolConfig),
+  });
+}
+
+function syncTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_sync",
+    label: "Kleinanzeigen Sync",
+    description:
+      "Compare up to 20 published local ads with Kleinanzeigen in one browser run (oldest " +
+      "sync first). Online changes are taken over locally when the local ad is unchanged; " +
+      "local changes are reported as local_ahead, changes on both sides as conflict. " +
+      "Nothing is changed on Kleinanzeigen.",
+    parameters: objectSchema(
+      {
+        confirm: confirmSchema,
+        internalIds: internalIdsSchema,
+        maxAds: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Maximum ads per run. Defaults to 20.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Only report; do not write anything locally.",
+        },
+      },
+      ["confirm"],
+    ),
+    operation: "sync",
+    needsUserAction: true,
+    handler: (toolConfig, params) => syncKleinanzeigenAds(params, toolConfig),
+  });
+}
+
+function storageCleanupTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_storage_cleanup",
+    label: "Kleinanzeigen Storage Cleanup",
+    description:
+      "Find images under adRoots that belong to no ad (older than minAgeDays), byte-identical " +
+      "duplicate images, and leftover temporary folders. Without apply it only reports. With " +
+      "apply and confirm it moves images to <adRoot>/.kleinclaw/trash/<date>, deletes " +
+      "temporary folders and empty subfolders, and purges trash older than trashRetentionDays. " +
+      "Images used by an ad are never touched.",
+    parameters: objectSchema({
+      confirm: confirmSchema,
+      apply: {
+        type: "boolean",
+        description: "Move/delete the found items. Defaults to false (report only).",
+      },
+      minAgeDays: {
+        type: "integer",
+        minimum: 0,
+        maximum: 365,
+        description: "Only unassigned images older than this many days. Defaults to 7.",
+      },
+      trashRetentionDays: {
+        type: "integer",
+        minimum: 0,
+        maximum: 365,
+        description: "Purge trash folders older than this many days. Defaults to 14.",
+      },
+    }),
+    operation: "storage_cleanup",
+    handler: (toolConfig, params) => cleanupKleinanzeigenStorage(params, toolConfig),
+  });
+}
+
+function imagePreferencesTool(config) {
+  return localTool(config, {
+    name: "kleinanzeigen_image_preferences",
+    label: "Kleinanzeigen Image Preferences",
+    description:
+      "What KleinClaw learned about the user's preferred image order: explicit rules, the " +
+      "usual cover role, average position per role, how the user corrects your proposals, " +
+      "and recent corrections. Read it before ordering images. add_rule/remove_rule manage " +
+      "the user's explicit rules.",
+    parameters: objectSchema({
+      action: {
+        type: "string",
+        enum: ["read", "add_rule", "remove_rule"],
+        description: "Defaults to read.",
+      },
+      category: {
+        type: "string",
+        description: "Only learn from ads whose category contains this text.",
+      },
+      rule: {
+        type: "string",
+        maxLength: 300,
+        description: "Rule text for add_rule, in the user's words.",
+      },
+      ruleId: {
+        type: "integer",
+        minimum: 1,
+        description: "Rule to remove with remove_rule.",
+      },
+      confirm: confirmSchema,
+    }),
+    operation: "image_preferences",
+    handler: (toolConfig, params) => kleinanzeigenImagePreferences(params, toolConfig),
   });
 }
 
@@ -1169,6 +1338,9 @@ export function createKleinanzeigenTools(config = {}) {
     setAdImagesTool(config),
     assignInternalIdsTool(config),
     syncCheckTool(config),
+    syncTool(config),
+    storageCleanupTool(config),
+    imagePreferencesTool(config),
     sendMessageTool(config),
     configuredOperationTool(config, {
       name: "kleinanzeigen_verify",

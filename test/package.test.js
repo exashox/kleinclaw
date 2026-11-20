@@ -313,7 +313,7 @@ describe("package install boundary", () => {
       const verifyTool = registeredTools.find(
         ({ tool }) => tool.name === "kleinanzeigen_verify",
       )?.tool;
-      assert.equal(registeredTools.length, 25);
+      assert.equal(registeredTools.length, 28);
       assert.equal(registeredHooks.length, 1);
       assert.equal(typeof statusTool?.execute, "function");
       assert.equal(typeof verifyTool?.execute, "function");

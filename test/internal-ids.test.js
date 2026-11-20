@@ -218,13 +218,19 @@ describe("ad image order", () => {
     assert.equal(yaml.price, 120);
     assert.equal(await fs.readFile(path.join(directory, "front _1_.jpg"), "utf8"), "front");
 
-    // Re-running with the same inbox file reuses the identical copy.
+    // Inbox photos are moved, so nothing unassigned stays behind.
+    assert.deepEqual(result.movedSources, [path.join("inbox", "front (1).jpg")]);
+    await assert.rejects(fs.stat(path.join(inbox, "front (1).jpg")), /ENOENT/);
+
+    // The same photo sent again under another name reuses the existing file.
+    await fs.writeFile(path.join(inbox, "IMG_0001.jpg"), "front");
     const again = await setKleinanzeigenAdImages(
-      { confirm: true, internalIds: [5], images: ["inbox/front (1).jpg"] },
+      { confirm: true, internalIds: [5], images: ["inbox/IMG_0001.jpg", "b-detail.jpg"] },
       config,
     );
     assert.deepEqual(again.copied, []);
-    assert.deepEqual(again.images, ["front _1_.jpg"]);
+    assert.deepEqual(again.images, ["front _1_.jpg", "b-detail.jpg"]);
+    await assert.rejects(fs.stat(path.join(inbox, "IMG_0001.jpg")), /ENOENT/);
   });
 
   it("rejects unsupported formats, duplicates, and files outside adRoots", async () => {
@@ -392,7 +398,11 @@ describe("online sync check", () => {
     assert.equal(result.changed, false);
     assert.ok(calls[0].includes("--ads=3100000011"));
     assert.ok(calls[0].includes("download"));
-    assert.equal(await fs.readFile(path.join(directory, "ad.yaml"), "utf8"), before);
+    const { last_synced_on: synced, ...afterFields } = parseYaml(
+      await fs.readFile(path.join(directory, "ad.yaml"), "utf8"),
+    );
+    assert.deepEqual(afterFields, parseYaml(before), "only the sync timestamp may change");
+    assert.ok(synced);
     const leftovers = (await fs.readdir(tmp)).filter((name) => name.startsWith(".kleinclaw-sync-"));
     assert.deepEqual(leftovers, [], "temporary download folder must be removed");
   });

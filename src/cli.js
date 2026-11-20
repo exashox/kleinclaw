@@ -1370,6 +1370,7 @@ function parseAdSummary(text) {
     soldOn: null,
     imageGlobs: [],
     imagesFingerprint: null,
+    lastSyncedOn: null,
   };
   let inImages = false;
 
@@ -1387,6 +1388,8 @@ function parseAdSummary(text) {
         summary.internalId = parseInternalIdValue(value);
       } else if (topLevel[1] === IMAGES_FINGERPRINT_KEY) {
         summary.imagesFingerprint = value || null;
+      } else if (topLevel[1] === "last_synced_on") {
+        summary.lastSyncedOn = value || null;
       } else if (topLevel[1] === "title") {
         summary.title = value;
       } else if (topLevel[1] === "price") {
@@ -3471,6 +3474,8 @@ const PRESERVED_DRAFT_KEYS = [
   "sold",
   "sold_on",
   IMAGES_FINGERPRINT_KEY,
+  "online_hash",
+  "last_synced_on",
 ];
 const SYNC_CORE_FIELDS = ["title", "description", "category", "price", "price_type"];
 const SYNC_OPTIONAL_FIELDS = [
@@ -3879,34 +3884,44 @@ function sanitizeImageFileName(name) {
   return `${stem}${extension.toLowerCase()}`;
 }
 
-async function sameFileContent(left, right) {
-  const [leftStat, rightStat] = await Promise.all([fs.stat(left), fs.stat(right)]);
-  if (leftStat.size !== rightStat.size) {
-    return false;
-  }
-  const [leftBuffer, rightBuffer] = await Promise.all([fs.readFile(left), fs.readFile(right)]);
-  return leftBuffer.equals(rightBuffer);
+async function hashFile(filePath) {
+  return createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
 }
 
-async function copyImageIntoAdDirectory(source, adDir, preferredName) {
+/** Content hashes of the image files directly inside one ad directory. */
+async function adDirectoryImageHashes(adDir) {
+  const hashes = new Map();
+  for (const entry of await fs.readdir(adDir, { withFileTypes: true })) {
+    if (entry.isFile() && IMAGE_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      hashes.set(entry.name, await hashFile(path.join(adDir, entry.name)));
+    }
+  }
+  return hashes;
+}
+
+async function copyImageIntoAdDirectory(source, adDir, preferredName, existingHashes = null) {
+  const sourceHash = await hashFile(source);
+  const hashes = existingHashes ?? await adDirectoryImageHashes(adDir);
+  for (const [name, hash] of hashes) {
+    if (hash === sourceHash) {
+      return { name, copied: false };
+    }
+  }
   const name = sanitizeImageFileName(preferredName);
   const extension = path.extname(name);
   const stem = path.basename(name, extension);
   for (let attempt = 1; attempt < 1000; attempt += 1) {
     const candidateName = attempt === 1 ? name : `${stem}-${attempt}${extension}`;
-    const candidate = path.join(adDir, candidateName);
     try {
-      await fs.stat(candidate);
+      await fs.copyFile(source, path.join(adDir, candidateName), fsConstants.COPYFILE_EXCL);
     } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
+      if (error?.code === "EEXIST") {
+        continue;
       }
-      await fs.copyFile(source, candidate, fsConstants.COPYFILE_EXCL);
-      return { name: candidateName, copied: true };
+      throw error;
     }
-    if (await sameFileContent(source, candidate)) {
-      return { name: candidateName, copied: false };
-    }
+    hashes.set(candidateName, sourceHash);
+    return { name: candidateName, copied: true };
   }
   throw new Error("could not find a free image file name in the ad directory");
 }
@@ -3954,7 +3969,162 @@ async function unlistedAdImages(adDir, listed) {
     .sort();
 }
 
-export async function setKleinanzeigenAdImages(params = {}, config = {}) {
+async function directoryHoldsAd(directory) {
+  for (const fileName of AD_FILE_NAMES) {
+    try {
+      if ((await fs.stat(path.join(directory, fileName))).isFile()) {
+        return true;
+      }
+    } catch {
+      // not this file name
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Image preferences: KleinClaw records the agent's proposed image order and the
+// order the user finally accepted, so the agent can learn the user's taste.
+// ---------------------------------------------------------------------------
+
+const KLEINCLAW_DIR = ".kleinclaw";
+const IMAGE_ROLES = [
+  "overview",
+  "angle",
+  "detail",
+  "label",
+  "defect",
+  "accessory",
+  "scale",
+  "packaging",
+  "other",
+];
+const IMAGE_ORDER_SOURCES = ["agent", "user"];
+const IMAGE_PROPOSAL_FILE = ".kleinclaw-image-proposal.json";
+const IMAGE_PREFERENCES_FILE = "image-preferences.json";
+const MAX_PREFERENCE_EVENTS = 300;
+const MAX_PREFERENCE_RULES = 50;
+
+async function imagePreferencesPath(config) {
+  const roots = await configuredAdRoots(config);
+  return path.join(roots[0], KLEINCLAW_DIR, IMAGE_PREFERENCES_FILE);
+}
+
+async function readImagePreferences(config) {
+  const filePath = await imagePreferencesPath(config);
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return {
+      version: 1,
+      rules: Array.isArray(parsed.rules) ? parsed.rules : [],
+      events: Array.isArray(parsed.events) ? parsed.events : [],
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { version: 1, rules: [], events: [] };
+    }
+    throw new Error("image preferences file cannot be read");
+  }
+}
+
+async function writeImagePreferences(config, preferences) {
+  const filePath = await imagePreferencesPath(config);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await writeFileAtomic(filePath, `${JSON.stringify(preferences, null, 2)}\n`, 0o600);
+}
+
+function normalizeImageAssessments(value, requested, images) {
+  if (value === undefined) {
+    return new Map();
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("assessments must be an array");
+  }
+  const byFinalName = new Map();
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`assessments[${index}] must be an object`);
+    }
+    const reference = normalizeAdDraftString(entry.image, `assessments[${index}].image`, {
+      required: true,
+    });
+    const position = requested.findIndex((candidate) =>
+      candidate === reference || path.basename(candidate) === path.basename(reference),
+    );
+    const finalName = position !== -1 ? images[position] : images.find((name) => name === reference);
+    if (!finalName) {
+      throw new Error(`assessments[${index}].image is not one of the listed images`);
+    }
+    const role = normalizeEnum(entry.role, `assessments[${index}].role`, IMAGE_ROLES) ?? "other";
+    const quality = normalizeNumber(entry.quality, `assessments[${index}].quality`, {
+      integer: true,
+      min: 1,
+    });
+    if (quality !== undefined && quality > 5) {
+      throw new Error(`assessments[${index}].quality must be between 1 and 5`);
+    }
+    byFinalName.set(finalName, {
+      role,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(typeof entry.note === "string" && entry.note.trim()
+        ? { note: entry.note.trim().slice(0, 200) }
+        : {}),
+    });
+  }
+  return byFinalName;
+}
+
+async function recordImageOrder({ adDir, images, assessments, orderSource, summary, config, now }) {
+  const proposalPath = path.join(adDir, IMAGE_PROPOSAL_FILE);
+  if (orderSource === "agent") {
+    const proposal = {
+      createdOn: now.toISOString(),
+      images: images.map((file) => ({ file, ...(assessments.get(file) ?? { role: "other" }) })),
+    };
+    await fs.writeFile(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`, "utf8");
+    return { recorded: "proposal" };
+  }
+
+  let proposal = null;
+  try {
+    proposal = JSON.parse(await fs.readFile(proposalPath, "utf8"));
+  } catch {
+    proposal = null;
+  }
+  const proposedByFile = new Map(
+    (Array.isArray(proposal?.images) ? proposal.images : []).map((entry) => [entry.file, entry]),
+  );
+  const final = images.map((file) => {
+    const fromProposal = proposedByFile.get(file);
+    const assessment = assessments.get(file) ?? (fromProposal
+      ? { role: fromProposal.role, ...(fromProposal.quality ? { quality: fromProposal.quality } : {}) }
+      : { role: "other" });
+    return { file, ...assessment };
+  });
+  const proposedOrder = Array.isArray(proposal?.images)
+    ? proposal.images.map((entry) => entry.file)
+    : null;
+  const corrected = proposedOrder === null
+    ? null
+    : JSON.stringify(proposedOrder) !== JSON.stringify(images);
+
+  const preferences = await readImagePreferences(config);
+  preferences.events.push({
+    date: now.toISOString().slice(0, 10),
+    internalId: summary.internalId,
+    title: summary.title,
+    category: summary.category,
+    proposal: proposal?.images ?? null,
+    final,
+    corrected,
+  });
+  preferences.events = preferences.events.slice(-MAX_PREFERENCE_EVENTS);
+  await writeImagePreferences(config, preferences);
+  await fs.rm(proposalPath, { force: true });
+  return { recorded: "feedback", corrected };
+}
+
+export async function setKleinanzeigenAdImages(params = {}, config = {}, { now = new Date() } = {}) {
   if (params.confirm !== true) {
     throw new Error("confirm must be true before changing ad images");
   }
@@ -3962,6 +4132,8 @@ export async function setKleinanzeigenAdImages(params = {}, config = {}) {
   if (!requested.length) {
     throw new Error("images is required: the image files in display order");
   }
+  const orderSource = normalizeEnum(params.orderSource, "orderSource", IMAGE_ORDER_SOURCES) ?? "agent";
+  const keepSource = normalizeBoolean(params.keepSource, "keepSource") ?? false;
   const adConfigPath = await resolveSingleAdConfig(params, config);
   if (!isYamlAdFile(adConfigPath)) {
     throw new Error("set_ad_images currently supports only YAML ad configs");
@@ -3978,9 +4150,27 @@ export async function setKleinanzeigenAdImages(params = {}, config = {}) {
     throw new Error("images lists the same file twice");
   }
 
+  // Identical photos under different names are listed only once.
+  const firstByHash = new Map();
+  const skippedDuplicates = [];
+  const keptRequests = [];
+  const keptSources = [];
+  for (const [index, source] of sources.entries()) {
+    const hash = await hashFile(source);
+    if (firstByHash.has(hash)) {
+      skippedDuplicates.push({ image: requested[index], duplicateOf: requested[firstByHash.get(hash)] });
+      continue;
+    }
+    firstByHash.set(hash, index);
+    keptRequests.push(requested[index]);
+    keptSources.push(source);
+  }
+
+  const existingHashes = await adDirectoryImageHashes(adDir);
   const images = [];
   const copied = [];
-  for (const source of sources) {
+  const movedSources = [];
+  for (const source of keptSources) {
     if (pathIsInside(source, adDir)) {
       const relative = path.relative(adDir, source).split(path.sep).join("/");
       if (GLOB_MAGIC_RE.test(relative)) {
@@ -3991,14 +4181,25 @@ export async function setKleinanzeigenAdImages(params = {}, config = {}) {
       images.push(relative);
       continue;
     }
-    const target = await copyImageIntoAdDirectory(source, adDir, path.basename(source));
+    const target = await copyImageIntoAdDirectory(
+      source,
+      adDir,
+      path.basename(source),
+      existingHashes,
+    );
     images.push(target.name);
+    const sourceRoot = roots.find((entry) => pathIsInside(source, entry)) ?? path.dirname(source);
     if (target.copied) {
-      const sourceRoot = roots.find((entry) => pathIsInside(source, entry)) ?? path.dirname(source);
       copied.push({ from: displayPathForAd(source, sourceRoot), to: target.name });
+    }
+    // Photos from an inbox are moved, so nothing unassigned stays behind.
+    if (!keepSource && !(await directoryHoldsAd(path.dirname(source)))) {
+      await fs.rm(source, { force: true });
+      movedSources.push(displayPathForAd(source, sourceRoot));
     }
   }
 
+  const assessments = normalizeImageAssessments(params.assessments, keptRequests, images);
   const beforeText = await fs.readFile(adConfigPath, "utf8");
   const before = parseAdSummary(beforeText);
   const afterText = replaceTopLevelYamlEntry(
@@ -4010,6 +4211,15 @@ export async function setKleinanzeigenAdImages(params = {}, config = {}) {
   if (changed) {
     await fs.writeFile(adConfigPath, afterText, "utf8");
   }
+  const learning = await recordImageOrder({
+    adDir,
+    images,
+    assessments,
+    orderSource,
+    summary: before,
+    config,
+    now,
+  });
 
   return {
     ok: true,
@@ -4022,13 +4232,147 @@ export async function setKleinanzeigenAdImages(params = {}, config = {}) {
     previousImages: before.imageGlobs,
     images,
     copied,
+    movedSources,
+    skippedDuplicates,
     unlistedImages: await unlistedAdImages(adDir, images),
-    nextActions: before.id
-      ? ["run scoped kleinanzeigen_verify, then kleinanzeigen_update scoped to this ad"]
-      : ["run scoped kleinanzeigen_verify on this ad"],
+    learning,
+    nextActions: [
+      ...(orderSource === "agent"
+        ? ["show the user the order with a short reason per image; after approval or " +
+            "correction call this tool again with orderSource user and the final order"]
+        : []),
+      before.id
+        ? "run scoped kleinanzeigen_verify, then kleinanzeigen_update scoped to this ad"
+        : "run scoped kleinanzeigen_verify on this ad",
+    ],
     ...localSuccessProcessFields(),
   };
 }
+
+function roundTo(value, digits = 1) {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+export async function kleinanzeigenImagePreferences(params = {}, config = {}, { now = new Date() } = {}) {
+  const action = normalizeEnum(params.action ?? "read", "action", ["read", "add_rule", "remove_rule"]);
+  const preferences = await readImagePreferences(config);
+  let changed = false;
+  if (action === "add_rule") {
+    if (params.confirm !== true) {
+      throw new Error("confirm must be true before adding an image rule");
+    }
+    const text = normalizeAdDraftString(params.rule, "rule", { required: true, maxLength: 300 });
+    if (preferences.rules.length >= MAX_PREFERENCE_RULES) {
+      throw new Error(`at most ${MAX_PREFERENCE_RULES} image rules; remove one first`);
+    }
+    const id = preferences.rules.reduce((max, rule) => Math.max(max, Number(rule.id) || 0), 0) + 1;
+    preferences.rules.push({ id, text, createdOn: now.toISOString().slice(0, 10) });
+    changed = true;
+  } else if (action === "remove_rule") {
+    if (params.confirm !== true) {
+      throw new Error("confirm must be true before removing an image rule");
+    }
+    const ruleId = normalizeNumber(params.ruleId, "ruleId", { integer: true, min: 1 });
+    const next = preferences.rules.filter((rule) => Number(rule.id) !== ruleId);
+    if (next.length === preferences.rules.length) {
+      throw new Error(`image rule ${ruleId} does not exist`);
+    }
+    preferences.rules = next;
+    changed = true;
+  }
+  if (changed) {
+    await writeImagePreferences(config, preferences);
+  }
+
+  const category = normalizeOptionalString(params.category)?.toLowerCase();
+  const events = preferences.events.filter((event) =>
+    !category || String(event.category ?? "").toLowerCase().includes(category),
+  );
+  const coverRoles = {};
+  const positions = {};
+  const moves = {};
+  for (const event of events) {
+    const final = Array.isArray(event.final) ? event.final : [];
+    if (final[0]?.role) {
+      coverRoles[final[0].role] = (coverRoles[final[0].role] ?? 0) + 1;
+    }
+    final.forEach((entry, index) => {
+      (positions[entry.role] ??= []).push(index + 1);
+    });
+    if (event.corrected && Array.isArray(event.proposal)) {
+      const proposed = event.proposal.map((entry) => entry.file);
+      final.forEach((entry, index) => {
+        const before = proposed.indexOf(entry.file);
+        if (before !== -1) {
+          (moves[entry.role] ??= []).push(before - index);
+        }
+      });
+    }
+  }
+  const average = (values) => roundTo(values.reduce((sum, value) => sum + value, 0) / values.length);
+  const averagePositionByRole = Object.fromEntries(
+    Object.entries(positions).map(([role, values]) => [role, average(values)]),
+  );
+  const userMovesByRole = Object.fromEntries(
+    Object.entries(moves).map(([role, values]) => [role, { average: average(values), count: values.length }]),
+  );
+  const corrections = events.filter((event) => event.corrected === true).length;
+  const reviewed = events.filter((event) => event.corrected !== null).length;
+
+  const guidance = preferences.rules.map((rule) => `user rule: ${rule.text}`);
+  const coverEntries = Object.entries(coverRoles).sort(([, left], [, right]) => right - left);
+  if (events.length >= 3 && coverEntries.length) {
+    const [role, count] = coverEntries[0];
+    guidance.push(`the cover is usually a "${role}" image (${count} of ${events.length} ads)`);
+  }
+  for (const [role, { average: delta, count }] of Object.entries(userMovesByRole)) {
+    if (count >= 2 && delta >= 1) {
+      guidance.push(`the user moves "${role}" images ${delta} positions earlier than proposed`);
+    } else if (count >= 2 && delta <= -1) {
+      guidance.push(`the user moves "${role}" images ${-delta} positions later than proposed`);
+    }
+  }
+
+  return {
+    ok: true,
+    operation: "image_preferences",
+    action,
+    changed,
+    rules: preferences.rules,
+    events: events.length,
+    reviewed,
+    corrections,
+    correctionRate: reviewed ? roundTo(corrections / reviewed, 2) : null,
+    coverRoles,
+    averagePositionByRole,
+    userMovesByRole,
+    recentCorrections: events
+      .filter((event) => event.corrected === true)
+      .slice(-5)
+      .map((event) => ({
+        date: event.date,
+        internalId: event.internalId,
+        title: event.title,
+        proposal: (event.proposal ?? []).map((entry) => `${entry.role}:${entry.file}`),
+        final: (event.final ?? []).map((entry) => `${entry.role}:${entry.file}`),
+      })),
+    guidance,
+    ...localSuccessProcessFields(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Online sync. `online_hash` remembers the live state seen at the last sync, so
+// a later sync can tell which side changed:
+//   local unchanged, online changed -> take over the online version
+//   local changed, online unchanged -> local is ahead, suggest update
+//   both changed                    -> conflict, the user decides
+// ---------------------------------------------------------------------------
+
+const ONLINE_HASH_KEY = "online_hash";
+const LAST_SYNCED_KEY = "last_synced_on";
+const MAX_SYNC_ADS = 20;
 
 function normalizeSyncText(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
@@ -4083,28 +4427,216 @@ function syncPreview(value) {
   return text.length > 300 ? `${text.slice(0, 297)}...` : text;
 }
 
-async function findDownloadedAdFile(directory, depth = 0) {
-  if (depth > 3) {
-    return null;
-  }
-  const entries = await fs.readdir(directory, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isFile() && /\.ya?ml$/i.test(entry.name)) {
-      return path.join(directory, entry.name);
+function compareWithOnline(local, online, builtinCategories) {
+  const differences = [];
+  for (const field of SYNC_FIELDS) {
+    if (!SYNC_CORE_FIELDS.includes(field) && local[field] === undefined) {
+      continue; // Not set locally: config defaults apply, no meaningful comparison.
+    }
+    const localValue = syncComparable(field, local[field], local, builtinCategories);
+    const onlineValue = syncComparable(field, online[field], local, builtinCategories);
+    if (JSON.stringify(localValue) !== JSON.stringify(onlineValue)) {
+      differences.push({
+        field,
+        local: syncPreview(local[field]),
+        online: syncPreview(online[field]),
+      });
     }
   }
-  for (const entry of entries) {
-    if (entry.isDirectory() && !entry.name.startsWith(".")) {
-      const found = await findDownloadedAdFile(path.join(directory, entry.name), depth + 1);
-      if (found) {
-        return found;
-      }
-    }
-  }
-  return null;
+  return differences;
 }
 
-export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
+function onlineStateHash(online, local, builtinCategories) {
+  const state = Object.fromEntries(
+    SYNC_FIELDS.map((field) => [field, syncComparable(field, online[field], local, builtinCategories)]),
+  );
+  state.images = Array.isArray(online.images) ? online.images.length : 0;
+  return createHash("sha256").update(JSON.stringify(state)).digest("hex").slice(0, 32);
+}
+
+async function findDownloadedAdFiles(directory, depth = 0) {
+  if (depth > 3) {
+    return [];
+  }
+  const found = [];
+  let entries;
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (entry.isFile() && /\.ya?ml$/i.test(entry.name)) {
+      found.push(path.join(directory, entry.name));
+    } else if (entry.isDirectory() && !entry.name.startsWith(".")) {
+      found.push(...await findDownloadedAdFiles(path.join(directory, entry.name), depth + 1));
+    }
+  }
+  return found;
+}
+
+/** Downloads live ads into a temporary folder next to the miniclaw config. */
+async function downloadOnlineAds(adIds, cliConfig) {
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const downloadDir = path.join(path.dirname(cliConfig.configPath), `.kleinclaw-sync-${suffix}`);
+  await fs.mkdir(downloadDir, { recursive: true, mode: 0o700 });
+  const cleanup = () => fs.rm(downloadDir, { recursive: true, force: true }).catch(() => {});
+  try {
+    const args = buildKleinanzeigenArgs(
+      "download",
+      { confirm: true, adIds: adIds.map(String) },
+      cliConfig,
+    );
+    args.push(`--download-dir=${downloadDir}`);
+    const result = await runRuntimeProcess(cliConfig.runtime, args, {
+      cwd: cliConfig.cwd,
+      timeoutMs: cliConfig.liveTimeoutMs,
+      maxBufferChars: cliConfig.maxOutputChars,
+      env: buildChildEnv(),
+      commandRunner: cliConfig.commandRunner,
+    });
+    const hashing = await loadMiniclawHashing();
+    const onlineById = new Map();
+    for (const file of await findDownloadedAdFiles(downloadDir)) {
+      const data = (await hashing.loadDataFile(file)) ?? {};
+      const id = String(data.id ?? "").trim();
+      if (id) {
+        onlineById.set(id, { file, data });
+      }
+    }
+    return { downloadDir, result, onlineById, hashing, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+async function assessAgainstOnline(adConfigPath, onlineEntry, { hashing, builtinCategories }) {
+  const local = (await hashing.loadDataFile(adConfigPath)) ?? {};
+  const online = onlineEntry.data;
+  const summary = parseAdSummary(await fs.readFile(adConfigPath, "utf8"));
+  const differences = compareWithOnline(local, online, builtinCategories);
+  const localImages = await resolveAdImageFiles(adConfigPath, summary.imageGlobs).catch(() => []);
+  const onlineImages = Array.isArray(online.images) ? online.images.map(String) : [];
+  const storedContentHash = typeof local.content_hash === "string" ? local.content_hash : "";
+  return {
+    local,
+    online,
+    summary,
+    differences,
+    localImages,
+    onlineImages,
+    imageCountDiffers: localImages.length !== onlineImages.length,
+    localChanged: !storedContentHash || hashing.contentHashForAd(local) !== storedContentHash,
+    onlineHash: onlineStateHash(online, local, builtinCategories),
+    storedOnlineHash: typeof local[ONLINE_HASH_KEY] === "string" ? local[ONLINE_HASH_KEY] : null,
+  };
+}
+
+async function applyOnlineVersion(adConfigPath, assessment, onlineEntry, { fields, images }) {
+  const adDir = path.dirname(adConfigPath);
+  let text = await fs.readFile(adConfigPath, "utf8");
+  const applied = [];
+  for (const field of fields) {
+    if (
+      !assessment.differences.some((entry) => entry.field === field) ||
+      assessment.online[field] === undefined
+    ) {
+      continue;
+    }
+    text = replaceTopLevelYamlEntry(text, field, yamlLinesForEntry(field, assessment.online[field]));
+    applied.push(field);
+  }
+  const importedImages = [];
+  if (images && assessment.onlineImages.length) {
+    const downloadedDir = path.dirname(onlineEntry.file);
+    const existingHashes = await adDirectoryImageHashes(adDir);
+    for (const [index, image] of assessment.onlineImages.entries()) {
+      const source = path.resolve(downloadedDir, image);
+      if (!pathIsInside(source, downloadedDir)) {
+        continue;
+      }
+      const extension = path.extname(source).toLowerCase() || ".jpg";
+      const target = await copyImageIntoAdDirectory(
+        source,
+        adDir,
+        `online-${String(index + 1).padStart(2, "0")}${extension}`,
+        existingHashes,
+      );
+      importedImages.push(target.name);
+    }
+    if (importedImages.length) {
+      text = replaceTopLevelYamlEntry(text, "images", yamlLinesForEntry("images", importedImages));
+    }
+  }
+  const changed = applied.length > 0 || importedImages.length > 0;
+  if (changed) {
+    await fs.writeFile(adConfigPath, text, "utf8");
+  }
+  const remaining = assessment.differences.filter((entry) => !applied.includes(entry.field));
+  const imagesInSync = !assessment.imageCountDiffers || importedImages.length > 0;
+  return {
+    applied,
+    importedImages,
+    changed,
+    inSyncAfter: remaining.length === 0 && imagesInSync,
+  };
+}
+
+async function recordSyncState(adConfigPath, { onlineHash, now, refreshHashes, hashing }) {
+  if (refreshHashes) {
+    // Local now equals the live ad: store hashes so update does not resend it.
+    const images = parseAdSummary(await fs.readFile(adConfigPath, "utf8")).imageGlobs;
+    const { fingerprint } = await computeImagesFingerprint(adConfigPath, images);
+    if (fingerprint) {
+      const text = await fs.readFile(adConfigPath, "utf8");
+      await fs.writeFile(
+        adConfigPath,
+        setYamlTopLevelScalar(text, IMAGES_FINGERPRINT_KEY, quoteYamlScalar(fingerprint)),
+        "utf8",
+      );
+    }
+    await writeContentHash(adConfigPath, hashing);
+  }
+  let text = await fs.readFile(adConfigPath, "utf8");
+  if (onlineHash) {
+    text = setYamlTopLevelScalar(text, ONLINE_HASH_KEY, quoteYamlScalar(onlineHash));
+  }
+  text = setYamlTopLevelScalar(
+    text,
+    LAST_SYNCED_KEY,
+    quoteYamlScalar(now.toISOString().replace(/\.\d{3}Z$/, "+00:00")),
+  );
+  await fs.writeFile(adConfigPath, text, "utf8");
+}
+
+async function loadBuiltinCategories() {
+  const { BUILTIN_CATEGORIES } = await import(
+    new URL("../miniclaw/dist/resources/categories.js", import.meta.url).href
+  );
+  return BUILTIN_CATEGORIES;
+}
+
+function downloadFailurePayload(base, download, config, cliConfig) {
+  const { result } = download;
+  const rawText = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n");
+  const userAction = detectUserActionRequest(rawText);
+  const redactions = buildRedactions({ ...config, ...cliConfig });
+  return {
+    ok: false,
+    ...base,
+    processOk: result.ok,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    needsUserAction: userAction.needsUserAction,
+    ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
+    message: "nothing could be downloaded; the ads may be offline or deleted, or the login failed",
+    stdout: sanitizeText(result.stdout, redactions, 2000),
+    stderr: sanitizeText(result.stderr, redactions, 2000),
+  };
+}
+
+export async function syncCheckKleinanzeigenAd(params = {}, config = {}, { now = new Date() } = {}) {
   if (params.confirm !== true) {
     throw new Error("confirm must be true before opening the live browser for a sync check");
   }
@@ -4122,7 +4654,6 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
   }
   const roots = await configuredAdRoots(config);
   const root = roots.find((entry) => pathIsInside(adConfigPath, entry)) ?? path.dirname(adConfigPath);
-  const adDir = path.dirname(adConfigPath);
   const summary = parseAdSummary(await fs.readFile(adConfigPath, "utf8"));
   if (!summary.id) {
     throw new Error("the ad has no Kleinanzeigen ID yet; there is nothing online to compare");
@@ -4130,27 +4661,8 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
 
   const cliConfig = resolveCliConfig(config);
   await assertConfiguredFiles(cliConfig);
-  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const downloadDir = path.join(path.dirname(cliConfig.configPath), `.kleinclaw-sync-${suffix}`);
-  await fs.mkdir(downloadDir, { recursive: true, mode: 0o700 });
-
+  const download = await downloadOnlineAds([summary.id], cliConfig);
   try {
-    const args = buildKleinanzeigenArgs(
-      "download",
-      { confirm: true, adIds: [String(summary.id)] },
-      cliConfig,
-    );
-    args.push(`--download-dir=${downloadDir}`);
-    const result = await runRuntimeProcess(cliConfig.runtime, args, {
-      cwd: cliConfig.cwd,
-      timeoutMs: cliConfig.liveTimeoutMs,
-      maxBufferChars: cliConfig.maxOutputChars,
-      env: buildChildEnv(),
-      commandRunner: cliConfig.commandRunner,
-    });
-    const rawText = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n");
-    const userAction = detectUserActionRequest(rawText);
-    const downloadedFile = await findDownloadedAdFile(downloadDir);
     const base = {
       operation: "sync_check",
       adPath: displayPathForAd(adConfigPath, root),
@@ -4158,140 +4670,503 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}) {
       kleinanzeigenId: summary.id,
       title: summary.title,
     };
-    if (!downloadedFile) {
-      const redactions = buildRedactions({ ...config, ...cliConfig });
-      return {
-        ok: false,
-        ...base,
-        processOk: result.ok,
-        exitCode: result.exitCode,
-        timedOut: result.timedOut,
-        needsUserAction: userAction.needsUserAction,
-        ...(userAction.needsUserAction ? { userActionHint: userAction.userActionHint } : {}),
-        message: "the ad could not be downloaded; it may be offline, deleted, or the login failed",
-        stdout: sanitizeText(result.stdout, redactions, 2000),
-        stderr: sanitizeText(result.stderr, redactions, 2000),
-      };
+    const onlineEntry = download.onlineById.get(String(summary.id));
+    if (!onlineEntry) {
+      return downloadFailurePayload(base, download, config, cliConfig);
     }
-
-    const hashing = await loadMiniclawHashing();
-    const { BUILTIN_CATEGORIES } = await import(
-      new URL("../miniclaw/dist/resources/categories.js", import.meta.url).href
-    );
-    const online = (await hashing.loadDataFile(downloadedFile)) ?? {};
-    const local = (await hashing.loadDataFile(adConfigPath)) ?? {};
-
-    const differences = [];
-    for (const field of SYNC_FIELDS) {
-      if (!SYNC_CORE_FIELDS.includes(field) && local[field] === undefined) {
-        continue; // Not set locally: config defaults apply, no meaningful comparison.
-      }
-      const localValue = syncComparable(field, local[field], local, BUILTIN_CATEGORIES);
-      const onlineValue = syncComparable(field, online[field], local, BUILTIN_CATEGORIES);
-      if (JSON.stringify(localValue) !== JSON.stringify(onlineValue)) {
-        differences.push({
-          field,
-          local: syncPreview(local[field]),
-          online: syncPreview(online[field]),
-        });
-      }
-    }
-
-    const localImages = await resolveAdImageFiles(adConfigPath, summary.imageGlobs).catch(() => []);
-    const onlineImages = Array.isArray(online.images) ? online.images.map(String) : [];
-    const imageCountDiffers = localImages.length !== onlineImages.length;
-
-    let afterText = await fs.readFile(adConfigPath, "utf8");
-    const applied = [];
-    for (const field of apply) {
-      if (!differences.some((entry) => entry.field === field) || online[field] === undefined) {
-        continue;
-      }
-      afterText = replaceTopLevelYamlEntry(
-        afterText,
-        field,
-        yamlLinesForEntry(field, online[field]),
-      );
-      applied.push(field);
-    }
-
-    const importedImages = [];
-    if (applyImages && onlineImages.length) {
-      const downloadedDir = path.dirname(downloadedFile);
-      for (const [index, image] of onlineImages.entries()) {
-        const source = path.resolve(downloadedDir, image);
-        if (!pathIsInside(source, downloadDir)) {
-          continue;
-        }
-        const extension = path.extname(source).toLowerCase() || ".jpg";
-        const target = await copyImageIntoAdDirectory(
-          source,
-          adDir,
-          `online-${String(index + 1).padStart(2, "0")}${extension}`,
-        );
-        importedImages.push(target.name);
-      }
-      if (importedImages.length) {
-        afterText = replaceTopLevelYamlEntry(
-          afterText,
-          "images",
-          yamlLinesForEntry("images", importedImages),
-        );
-      }
-    }
-
-    const changed = applied.length > 0 || importedImages.length > 0;
-    const remaining = differences.filter((entry) => !applied.includes(entry.field));
-    const imagesInSync = !imageCountDiffers || importedImages.length > 0;
-    const inSync = remaining.length === 0 && imagesInSync;
-    if (changed) {
-      await fs.writeFile(adConfigPath, afterText, "utf8");
-      if (inSync) {
-        // Local now equals the live ad: store hashes so update does not resend it.
-        const images = parseAdSummary(afterText).imageGlobs;
-        const { fingerprint } = await computeImagesFingerprint(adConfigPath, images);
-        if (fingerprint) {
-          const text = await fs.readFile(adConfigPath, "utf8");
-          await fs.writeFile(
-            adConfigPath,
-            setYamlTopLevelScalar(text, IMAGES_FINGERPRINT_KEY, quoteYamlScalar(fingerprint)),
-            "utf8",
-          );
-        }
-        await writeContentHash(adConfigPath, hashing);
-      }
-    }
+    const context = { hashing: download.hashing, builtinCategories: await loadBuiltinCategories() };
+    const assessment = await assessAgainstOnline(adConfigPath, onlineEntry, context);
+    const outcome = await applyOnlineVersion(adConfigPath, assessment, onlineEntry, {
+      fields: apply,
+      images: applyImages,
+    });
+    const inSyncBefore = assessment.differences.length === 0 && !assessment.imageCountDiffers;
+    await recordSyncState(adConfigPath, {
+      // Remember the live state only when both sides agree; open differences
+      // stay visible to the next sync.
+      onlineHash: inSyncBefore || outcome.inSyncAfter ? assessment.onlineHash : null,
+      now,
+      refreshHashes: outcome.changed && outcome.inSyncAfter,
+      hashing: download.hashing,
+    });
 
     return {
       ok: true,
       ...base,
-      inSync: differences.length === 0 && !imageCountDiffers,
-      differences,
+      inSync: inSyncBefore,
+      localChanged: assessment.localChanged,
+      differences: assessment.differences,
       images: {
-        local: localImages.length,
-        online: onlineImages.length,
-        countDiffers: imageCountDiffers,
+        local: assessment.localImages.length,
+        online: assessment.onlineImages.length,
+        countDiffers: assessment.imageCountDiffers,
         note: "online images are re-encoded by Kleinanzeigen, so only the count is compared",
       },
-      applied,
-      importedImages,
-      changed,
-      nextActions: !changed
-        ? differences.length || imageCountDiffers
-          ? [
+      applied: outcome.applied,
+      importedImages: outcome.importedImages,
+      changed: outcome.changed,
+      nextActions: !outcome.changed
+        ? inSyncBefore
+          ? ["local ad and online ad match"]
+          : [
               "show the differences to the user",
               "to keep the online version: call again with apply (and applyImages)",
               "to keep the local version: run kleinanzeigen_update scoped to this ad",
             ]
-          : ["local ad and online ad match"]
-        : inSync
+        : outcome.inSyncAfter
           ? ["local ad now matches the online ad"]
           : ["remaining local differences will be sent by the next scoped kleinanzeigen_update"],
       ...localSuccessProcessFields(),
     };
   } finally {
-    await fs.rm(downloadDir, { recursive: true, force: true }).catch(() => {});
+    await download.cleanup();
   }
+}
+
+export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new Date() } = {}) {
+  if (params.confirm !== true) {
+    throw new Error("confirm must be true before opening the live browser for a sync");
+  }
+  const dryRun = normalizeBoolean(params.dryRun, "dryRun") ?? false;
+  const maxAds = normalizePositiveInteger(params.maxAds, MAX_SYNC_ADS, 1, MAX_SYNC_ADS);
+  const internalIds = normalizeInternalIds(params.internalIds, { maxItems: MAX_SYNC_ADS });
+  const roots = await configuredAdRoots(config);
+
+  let candidates;
+  if (internalIds.length) {
+    const paths = await resolveInternalIdScope(internalIds, config);
+    candidates = (await collectLocalAds(config)).filter((ad) => paths.includes(ad.adConfigPath));
+  } else {
+    candidates = await collectLocalAds(config);
+  }
+  const skipped = { notPublished: 0, sold: 0, notYaml: 0 };
+  candidates = candidates.filter((ad) => {
+    if (!isYamlAdFile(ad.adConfigPath)) {
+      skipped.notYaml += 1;
+      return false;
+    }
+    if (!ad.summary.id) {
+      skipped.notPublished += 1;
+      return false;
+    }
+    if (ad.summary.sold) {
+      skipped.sold += 1;
+      return false;
+    }
+    return true;
+  });
+  // Oldest sync first, so repeated runs rotate through all ads.
+  candidates.sort((left, right) =>
+    (left.summary.lastSyncedOn ?? "").localeCompare(right.summary.lastSyncedOn ?? ""),
+  );
+  const selected = candidates.slice(0, maxAds);
+  const base = {
+    operation: "sync",
+    dryRun,
+    remaining: candidates.length - selected.length,
+    skipped,
+  };
+  if (!selected.length) {
+    return { ok: true, ...base, checked: 0, results: [], counts: {}, ...localSuccessProcessFields() };
+  }
+
+  const cliConfig = resolveCliConfig(config);
+  await assertConfiguredFiles(cliConfig);
+  const download = await downloadOnlineAds(selected.map((ad) => ad.summary.id), cliConfig);
+  try {
+    if (download.onlineById.size === 0) {
+      return downloadFailurePayload(base, download, config, cliConfig);
+    }
+    const context = { hashing: download.hashing, builtinCategories: await loadBuiltinCategories() };
+    const results = [];
+    for (const ad of selected) {
+      const reference = {
+        internalId: ad.summary.internalId,
+        kleinanzeigenId: ad.summary.id,
+        title: ad.summary.title,
+        adDirectory: displayPathForAd(
+          path.dirname(ad.adConfigPath),
+          roots.find((root) => pathIsInside(ad.adConfigPath, root)) ?? ad.root,
+        ),
+      };
+      const onlineEntry = download.onlineById.get(String(ad.summary.id));
+      if (!onlineEntry) {
+        results.push({ ...reference, status: "not_found_online" });
+        continue;
+      }
+      const assessment = await assessAgainstOnline(ad.adConfigPath, onlineEntry, context);
+      const differs = assessment.differences.length > 0 || assessment.imageCountDiffers;
+      let status;
+      if (!differs) {
+        status = "in_sync";
+      } else if (!assessment.localChanged) {
+        status = "pulled";
+      } else if (assessment.storedOnlineHash && assessment.storedOnlineHash === assessment.onlineHash) {
+        status = "local_ahead";
+      } else {
+        status = "conflict";
+      }
+
+      const entry = {
+        ...reference,
+        status,
+        ...(differs ? { differences: assessment.differences } : {}),
+        ...(assessment.imageCountDiffers
+          ? { images: { local: assessment.localImages.length, online: assessment.onlineImages.length } }
+          : {}),
+      };
+      if (dryRun) {
+        results.push(status === "pulled" ? { ...entry, status: "would_pull" } : entry);
+        continue;
+      }
+      let refreshHashes = false;
+      if (status === "pulled") {
+        const outcome = await applyOnlineVersion(ad.adConfigPath, assessment, onlineEntry, {
+          fields: assessment.differences.map((difference) => difference.field),
+          images: assessment.imageCountDiffers,
+        });
+        entry.applied = outcome.applied;
+        entry.importedImages = outcome.importedImages;
+        refreshHashes = outcome.inSyncAfter;
+      }
+      await recordSyncState(ad.adConfigPath, {
+        // A conflict keeps the previous online state, so it stays a conflict until resolved.
+        onlineHash: status === "conflict" ? null : assessment.onlineHash,
+        now,
+        refreshHashes,
+        hashing: download.hashing,
+      });
+      results.push(entry);
+    }
+
+    const counts = results.reduce((total, entry) => {
+      total[entry.status] = (total[entry.status] ?? 0) + 1;
+      return total;
+    }, {});
+    const nextActions = [];
+    if (counts.pulled) {
+      nextActions.push("tell the user which online changes were taken over locally");
+    }
+    if (counts.would_pull) {
+      nextActions.push("dry run: run again without dryRun to take over the online changes");
+    }
+    if (counts.local_ahead) {
+      nextActions.push("local_ahead ads have local changes: offer a scoped kleinanzeigen_update");
+    }
+    if (counts.conflict) {
+      nextActions.push(
+        "conflict ads changed on both sides: show the differences and ask per field; " +
+          "use kleinanzeigen_sync_check with apply for the online side",
+      );
+    }
+    if (counts.not_found_online) {
+      nextActions.push(
+        "not_found_online ads may be deleted, expired or paused; ask the user before changing them",
+      );
+    }
+    if (base.remaining > 0) {
+      nextActions.push(`${base.remaining} more ads are due; the next sync continues with them`);
+    }
+
+    return {
+      ok: true,
+      ...base,
+      checked: results.length,
+      counts,
+      results,
+      nextActions,
+      ...localSuccessProcessFields(),
+    };
+  } finally {
+    await download.cleanup();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Storage hygiene: images that belong to no ad, duplicate images, and
+// leftover temporary folders are moved to a dated trash folder
+// (<adRoot>/.kleinclaw/trash/YYYY-MM-DD) and purged after the retention time.
+// ---------------------------------------------------------------------------
+
+const TEMP_ENTRY_RE = /^(\.kleinclaw-sync-|\.tmp-|\.bak-)/;
+const TEMP_CONFIG_RE = /^\.kleinclaw-.+\.(ya?ml|json)$/;
+const TEMP_MIN_AGE_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TRASH_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_CLEANUP_REPORT_ITEMS = 100;
+
+async function pathSize(target) {
+  const stat = await fs.lstat(target);
+  if (!stat.isDirectory()) {
+    return stat.size;
+  }
+  let total = 0;
+  for (const entry of await fs.readdir(target)) {
+    total += await pathSize(path.join(target, entry));
+  }
+  return total;
+}
+
+async function scanAdRootStorage(root) {
+  const images = [];
+  const tempEntries = [];
+  const directories = [];
+  async function visit(directory, depth) {
+    if (depth > 6) {
+      return;
+    }
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.name.startsWith(".")) {
+        if (TEMP_ENTRY_RE.test(entry.name)) {
+          tempEntries.push(fullPath);
+        }
+        continue; // never descend into hidden folders such as .kleinclaw or .git
+      }
+      if (entry.isDirectory()) {
+        directories.push(fullPath);
+        await visit(fullPath, depth + 1);
+      } else if (entry.isFile() && IMAGE_FILE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        images.push(fullPath);
+      }
+    }
+  }
+  await visit(root, 0);
+  return { images, tempEntries, directories };
+}
+
+async function isEmptyDirectory(directory) {
+  try {
+    return (await fs.readdir(directory)).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function cleanupKleinanzeigenStorage(params = {}, config = {}, { now = new Date() } = {}) {
+  const apply = normalizeBoolean(params.apply, "apply") ?? false;
+  if (apply && params.confirm !== true) {
+    throw new Error("confirm must be true before cleaning up storage");
+  }
+  const minAgeDays = normalizeNumber(params.minAgeDays, "minAgeDays", { integer: true, min: 0 }) ?? 7;
+  const trashRetentionDays =
+    normalizeNumber(params.trashRetentionDays, "trashRetentionDays", { integer: true, min: 0 }) ?? 14;
+  const nowMs = now.getTime();
+  const today = now.toISOString().slice(0, 10);
+  const roots = await configuredAdRoots(config);
+  const ads = await collectLocalAds(config);
+  const adDirectories = new Set(ads.map((ad) => path.dirname(ad.adConfigPath)));
+
+  const referencedBy = new Map();
+  for (const ad of ads) {
+    const files = await resolveAdImageFiles(ad.adConfigPath, ad.summary.imageGlobs).catch(() => []);
+    for (const file of files) {
+      const resolved = await realPath(file).catch(() => file);
+      if (!referencedBy.has(resolved)) {
+        referencedBy.set(resolved, []);
+      }
+      referencedBy.get(resolved).push(ad);
+    }
+  }
+
+  const candidates = [];
+  const duplicatesInAd = [];
+  const sharedDuplicates = [];
+  const scannedDirectories = [];
+
+  for (const root of roots) {
+    const { images, tempEntries, directories } = await scanAdRootStorage(root);
+    scannedDirectories.push(...directories.map((directory) => ({ directory, root })));
+
+    for (const entry of tempEntries) {
+      const stat = await fs.lstat(entry).catch(() => null);
+      if (stat && nowMs - stat.mtimeMs >= TEMP_MIN_AGE_MS) {
+        candidates.push({ path: entry, root, reason: "temporary", bytes: await pathSize(entry), remove: true });
+      }
+    }
+
+    const trashRoot = path.join(root, KLEINCLAW_DIR, "trash");
+    for (const day of await fs.readdir(trashRoot).catch(() => [])) {
+      const dayStart = Date.parse(`${day}T00:00:00Z`);
+      if (TRASH_DAY_RE.test(day) && nowMs - dayStart >= trashRetentionDays * DAY_MS) {
+        const target = path.join(trashRoot, day);
+        candidates.push({ path: target, root, reason: "expired_trash", bytes: await pathSize(target), remove: true });
+      }
+    }
+
+    const items = [];
+    const byHash = new Map();
+    for (const image of images) {
+      const resolved = await realPath(image).catch(() => image);
+      const stat = await fs.stat(resolved);
+      const item = {
+        path: resolved,
+        root,
+        bytes: stat.size,
+        ageDays: (nowMs - stat.mtimeMs) / DAY_MS,
+        hash: await hashFile(resolved),
+        ads: referencedBy.get(resolved) ?? [],
+      };
+      items.push(item);
+      if (!byHash.has(item.hash)) {
+        byHash.set(item.hash, []);
+      }
+      byHash.get(item.hash).push(item);
+    }
+
+    for (const group of byHash.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const referenced = group.filter((item) => item.ads.length);
+      const keep = referenced.length
+        ? referenced
+        : [[...group].sort((left, right) => right.ageDays - left.ageDays)[0]];
+      for (const item of group) {
+        if (!keep.includes(item)) {
+          item.duplicateOf = keep[0].path;
+        }
+      }
+      const byAd = new Map();
+      for (const item of referenced) {
+        for (const ad of item.ads) {
+          if (!byAd.has(ad.adConfigPath)) {
+            byAd.set(ad.adConfigPath, { ad, files: [] });
+          }
+          byAd.get(ad.adConfigPath).files.push(path.basename(item.path));
+        }
+      }
+      for (const { ad, files } of byAd.values()) {
+        if (files.length > 1) {
+          duplicatesInAd.push({ internalId: ad.summary.internalId, title: ad.summary.title, files });
+        }
+      }
+      if (byAd.size > 1) {
+        sharedDuplicates.push({
+          ads: [...byAd.values()].map(({ ad }) => ({
+            internalId: ad.summary.internalId,
+            title: ad.summary.title,
+          })),
+          files: [...new Set(referenced.map((item) => path.basename(item.path)))],
+        });
+      }
+    }
+
+    for (const item of items) {
+      if (item.ads.length) {
+        continue;
+      }
+      if (item.duplicateOf) {
+        candidates.push({ ...item, reason: "duplicate" });
+      } else if (item.ageDays >= minAgeDays) {
+        candidates.push({
+          ...item,
+          reason: adDirectories.has(path.dirname(item.path)) ? "unlisted_in_ad" : "unassigned",
+        });
+      }
+    }
+  }
+
+  // Leftovers of sync checks and scoped runs next to the miniclaw config.
+  let configDir = null;
+  try {
+    configDir = path.dirname(resolveCliConfig(config).configPath);
+  } catch {
+    configDir = null;
+  }
+  if (configDir) {
+    for (const entry of await fs.readdir(configDir, { withFileTypes: true }).catch(() => [])) {
+      if (!TEMP_ENTRY_RE.test(entry.name) && !TEMP_CONFIG_RE.test(entry.name)) {
+        continue;
+      }
+      const target = path.join(configDir, entry.name);
+      const stat = await fs.lstat(target).catch(() => null);
+      if (
+        stat && nowMs - stat.mtimeMs >= TEMP_MIN_AGE_MS &&
+        !candidates.some((candidate) => candidate.path === target)
+      ) {
+        candidates.push({ path: target, root: configDir, reason: "temporary", bytes: await pathSize(target), remove: true });
+      }
+    }
+  }
+
+  const removedDirectories = [];
+  if (apply) {
+    for (const candidate of candidates) {
+      if (candidate.remove) {
+        await fs.rm(candidate.path, { recursive: true, force: true });
+        continue;
+      }
+      const relative = path.relative(candidate.root, candidate.path);
+      const target = path.join(candidate.root, KLEINCLAW_DIR, "trash", today, relative);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      let destination = target;
+      for (let attempt = 2; await fs.stat(destination).then(() => true, () => false); attempt += 1) {
+        const extension = path.extname(target);
+        destination = `${target.slice(0, -extension.length || undefined)}-${attempt}${extension}`;
+      }
+      await fs.rename(candidate.path, destination);
+    }
+    // Deepest folders first, so emptied parents follow.
+    const ordered = [...scannedDirectories].sort(
+      (left, right) => right.directory.length - left.directory.length,
+    );
+    for (const { directory, root } of ordered) {
+      // Keep ad folders and top-level folders such as an inbox.
+      if (adDirectories.has(directory) || path.dirname(directory) === root) {
+        continue;
+      }
+      if (await isEmptyDirectory(directory)) {
+        await fs.rmdir(directory).catch(() => {});
+        removedDirectories.push(displayPathForAd(directory, root));
+      }
+    }
+  }
+
+  const counts = {};
+  let bytes = 0;
+  for (const candidate of candidates) {
+    counts[candidate.reason] = (counts[candidate.reason] ?? 0) + 1;
+    bytes += candidate.bytes ?? 0;
+  }
+  const display = (target, root) =>
+    root === configDir ? path.basename(target) : displayPathForAd(target, root);
+
+  return {
+    ok: true,
+    operation: "storage_cleanup",
+    applied: apply,
+    minAgeDays,
+    trashRetentionDays,
+    counts,
+    bytes,
+    megabytes: roundTo(bytes / (1024 * 1024), 2),
+    items: candidates.slice(0, MAX_CLEANUP_REPORT_ITEMS).map((candidate) => ({
+      path: display(candidate.path, candidate.root),
+      reason: candidate.reason,
+      bytes: candidate.bytes,
+      ...(candidate.ageDays !== undefined ? { ageDays: roundTo(candidate.ageDays) } : {}),
+      ...(candidate.duplicateOf
+        ? { duplicateOf: displayPathForAd(candidate.duplicateOf, candidate.root) }
+        : {}),
+    })),
+    duplicatesInAd,
+    sharedDuplicates,
+    removedDirectories,
+    trash: `${KLEINCLAW_DIR}/trash/<date> under each adRoot; purged after ${trashRetentionDays} days`,
+    nextActions: apply
+      ? ["report what was moved to the trash and how much space was freed"]
+      : candidates.length
+        ? ["show the user the list, then run again with apply true and confirm true"]
+        : ["nothing to clean up"],
+    ...localSuccessProcessFields(),
+  };
 }
 
 export async function runKleinanzeigenOperation(operation, requestParams = {}, config = {}) {
