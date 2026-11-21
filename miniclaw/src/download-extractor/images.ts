@@ -33,6 +33,7 @@ export interface DownloadImagesFromAdPageOptions {
 }
 
 interface DownloadImagesController extends ProbingController {
+  webExecute?(jscode: string): Promise<unknown>;
   webFind(
     type: By,
     value: string,
@@ -46,6 +47,51 @@ interface DownloadImagesController extends ProbingController {
 }
 
 const DEFAULT_IMAGE_DOWNLOAD_TIMEOUT = 60;
+
+/**
+ * Layout of 2026-11: the gallery sits next to #viewad-main-info in the same
+ * column. Ad images come from the prod-ads image API; the thumbnails in the
+ * seller's other ads and the similar ads (list items) stay out. Returns the
+ * image URLs in page order as a JSON array.
+ */
+export const MAIN_GALLERY_SCRIPT = String.raw`(() => {
+  const main = document.querySelector("#viewad-main-info");
+  const scope = (main && main.parentElement) || document;
+  const seen = new Set();
+  const urls = [];
+  for (const img of scope.querySelectorAll("img")) {
+    if (img.closest("li, [id$='-ads-list']")) {
+      continue;
+    }
+    const src = img.currentSrc || img.src || img.dataset.src || img.dataset.imgsrc || "";
+    if (!/^https:\/\/img\.kleinanzeigen\.de\/api\/v1\/prod-ads\/images\//.test(src)) {
+      continue;
+    }
+    const key = src.split("?")[0];
+    if (!seen.has(key)) {
+      seen.add(key);
+      urls.push(src);
+    }
+  }
+  return JSON.stringify(urls);
+})()`;
+
+async function mainGalleryImageUrls(
+  controller: DownloadImagesController,
+): Promise<string[]> {
+  if (typeof controller.webExecute !== "function") {
+    return [];
+  }
+  const raw = await controller.webExecute(MAIN_GALLERY_SCRIPT).catch(() => "[]");
+  try {
+    const urls: unknown = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(urls)
+      ? urls.filter((url): url is string => typeof url === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function contentTypeExtension(contentType: string | null): string {
   const normalized = (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase();
@@ -102,7 +148,22 @@ export async function downloadImagesFromAdPage(
   { imageDownloadTimeout }: DownloadImagesFromAdPageOptions = {},
 ): Promise<string[]> {
   const imagePaths: string[] = [];
+  const imageFilenamePrefix = `${adFileStem}__img`;
   if (!(await elementPresent(controller, By.CLASS_NAME, "galleryimage-large"))) {
+    let imageNumber = 1;
+    for (const url of await mainGalleryImageUrls(controller)) {
+      const imagePath = await downloadImage(
+        url,
+        directory,
+        imageFilenamePrefix,
+        imageNumber,
+        { timeout: imageDownloadTimeout },
+      );
+      if (imagePath) {
+        imagePaths.push(path.basename(imagePath));
+      }
+      imageNumber += 1;
+    }
     return imagePaths;
   }
   try {
@@ -115,7 +176,6 @@ export async function downloadImagesFromAdPage(
       ".galleryimage-element[data-ix] > img",
       { parent: imageBox },
     );
-    const imageFilenamePrefix = `${adFileStem}__img`;
     let imageNumber = 1;
 
     for (const imageElement of images) {

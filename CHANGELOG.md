@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.10 - 2026-11-21
+
+- miniclaw download reads the ad page layout of 2026-11 (gallery next to
+  `#viewad-main-info`):
+  - images: the ad images in page order (large `$_59` variant); thumbnails of
+    the seller's other ads and of similar ads are left out
+  - shipping: the shipping line in `#viewad-main-info` (`+ Versand ab 7,69 €`,
+    `Nur Abholung`)
+  - creation date: the date span in `#viewad-main-info`
+  - the old selectors are still tried first
+- with images and shipping readable again, `kleinanzeigen_sync` compares them
+  again; run it with `dryRun: true` first
+
 ## 0.5.9 - 2026-11-21
 
 - `kleinanzeigen_sync` / `kleinanzeigen_sync_check`: the page structure is

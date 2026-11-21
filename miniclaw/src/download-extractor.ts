@@ -74,6 +74,9 @@ export {
 } from "./download-extractor/persistence.js";
 
 const LOG_SNIPPET_LIMIT = 120;
+const MAIN_INFO_DATE_SCRIPT = String.raw`Array.from(document.querySelectorAll("#viewad-main-info span"))
+  .map((el) => (el.textContent || "").trim())
+  .find((text) => /^\d{2}\.\d{2}\.\d{4}$/.test(text)) || ""`;
 const ELLIPSIS = "...";
 
 export interface DownloadExtractorController extends ProbingController {
@@ -366,6 +369,9 @@ export class DownloadAdExtractor {
       "document.querySelector('#viewad-extra-info')?.innerText ?? ''",
     ).catch(() => "");
     candidates.push(String(extraInfo ?? ""));
+    // Layout of 2026-11: a span holding only the date in the main info box.
+    const mainInfoDate = await this.controller.webExecute(MAIN_INFO_DATE_SCRIPT).catch(() => "");
+    candidates.push(String(mainInfoDate ?? ""));
 
     for (const candidate of candidates) {
       const match = /\b(\d{2}\.\d{2}\.\d{4})\b/.exec(candidate);

@@ -336,6 +336,42 @@ describe("miniclaw download contact and classification", () => {
     assert.equal(await extractorFor("").extractCreationDateFromAdPage(), null);
   });
 
+  it("reads shipping and date from the main info box of the 2026-11 layout", async () => {
+    const { MAIN_INFO_SHIPPING_SCRIPT } = await import(
+      "../miniclaw/dist/download-extractor/pricing-shipping.js"
+    );
+    const scripts = [];
+    const controller = {
+      ...createController({
+        request: async () => ({
+          statusCode: 200,
+          statusMessage: "ok",
+          headers: {},
+          content: JSON.stringify({ data: { shippingOptionsResponse: { options: [] } } }),
+        }),
+      }),
+      async webProbe() {
+        return null;
+      },
+      async webExecute(script) {
+        scripts.push(script);
+        if (script === MAIN_INFO_SHIPPING_SCRIPT) {
+          return "Versand ab 7,69 €";
+        }
+        return script.includes("#viewad-main-info span") ? "18.11.2026" : "";
+      },
+    };
+    assert.deepEqual(
+      await extractShippingInfoFromAdPage(new Config({}), controller),
+      ["SHIPPING", 7.69, null],
+    );
+    const extractor = new DownloadAdExtractor({ config: new Config({}), downloadDir: os.tmpdir(), controller });
+    assert.equal(await extractor.extractCreationDateFromAdPage(), "2026-11-18T00:00:00");
+    assert.ok(MAIN_INFO_SHIPPING_SCRIPT.includes(String.raw`/^\+?\s*(Versand|Nur Abholung)/i`));
+    assert.doesNotThrow(() => new Function(`return ${MAIN_INFO_SHIPPING_SCRIPT};`));
+    assert.ok(scripts.length >= 2);
+  });
+
   it("uses published-ad metadata for sell-directly and category breadcrumbs", async () => {
     assert.equal(
       extractSellDirectlyFromAdPage(
@@ -427,6 +463,53 @@ describe("miniclaw download images and persistence", () => {
         url: "https://img.example/b.jpg",
       },
     ]);
+  });
+
+  it("reads the gallery of the 2026-11 layout next to the main info box", async () => {
+    const { MAIN_GALLERY_SCRIPT } = await import("../miniclaw/dist/download-extractor/images.js");
+    const api = "https://img.kleinanzeigen.de/api/v1/prod-ads/images";
+    const img = (src, inList = false) => ({
+      currentSrc: src,
+      src,
+      dataset: {},
+      closest: () => (inList ? {} : null),
+    });
+    // Fake page: two gallery images (one repeated by the carousel), a seller
+    // thumbnail in a list, and a non-ad image.
+    const column = {
+      querySelectorAll: () => [
+        img(`${api}/aa/one?rule=$_59.AUTO`),
+        img(`${api}/bb/two?rule=$_59.AUTO`),
+        img(`${api}/aa/one?rule=$_59.AUTO`),
+        img(`${api}/cc/other-ad?rule=$_12.AUTO`, true),
+        img("https://static.kleinanzeigen.de/logo.png"),
+      ],
+    };
+    const fakeDocument = { querySelector: () => ({ parentElement: column }) };
+    const urls = JSON.parse(new Function("document", `return ${MAIN_GALLERY_SCRIPT};`)(fakeDocument));
+    assert.deepEqual(urls, [`${api}/aa/one?rule=$_59.AUTO`, `${api}/bb/two?rule=$_59.AUTO`]);
+
+    const controller = {
+      ...createController(),
+      async webProbe() {
+        return null;
+      },
+      async webExecute(script) {
+        return script === MAIN_GALLERY_SCRIPT ? JSON.stringify(urls) : "";
+      },
+    };
+    const calls = [];
+    const images = await downloadImagesFromAdPage(
+      controller,
+      async (url, directory, prefix, imageNumber) => {
+        calls.push(url);
+        return path.join(directory, `${prefix}${imageNumber}.jpg`);
+      },
+      "/tmp/downloads",
+      "ad_123",
+    );
+    assert.deepEqual(images, ["ad_123__img1.jpg", "ad_123__img2.jpg"]);
+    assert.deepEqual(calls, urls);
   });
 
   it("times out stalled image downloads", async () => {

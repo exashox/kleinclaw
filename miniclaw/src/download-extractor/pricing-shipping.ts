@@ -22,8 +22,42 @@ const SHIPPING_OPTIONS_URL =
   "https://gateway.kleinanzeigen.de/postad/api/v1/" +
   "shipping-options?posterType=PRIVATE";
 
+/**
+ * Layout of 2026-11: the shipping line ("+ Versand ab 7,69 €", "Nur Abholung")
+ * is a span in the main info box; the similar-ads list below has its own
+ * "Versand möglich" labels and stays out.
+ */
+export const MAIN_INFO_SHIPPING_SCRIPT = String.raw`(() => {
+  const ownText = (el) => Array.from(el.childNodes)
+    .filter((node) => node.nodeType === 3)
+    .map((node) => node.textContent)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const hit = Array.from(document.querySelectorAll("#viewad-main-info span"))
+    .map(ownText)
+    .find((text) => /^\+?\s*(Versand|Nur Abholung)/i.test(text));
+  return hit ? hit.replace(/^\+\s*/, "") : "";
+})()`;
+
+async function readShippingText(
+  controller: PricingShippingController,
+): Promise<string | null> {
+  if (await elementPresent(controller, By.CLASS_NAME, "boxedarticle--details--shipping")) {
+    return controller.webText(By.CLASS_NAME, "boxedarticle--details--shipping");
+  }
+  if (typeof controller.webExecute !== "function") {
+    return null;
+  }
+  const text = String(
+    (await controller.webExecute(MAIN_INFO_SHIPPING_SCRIPT).catch(() => "")) ?? "",
+  ).trim();
+  return text || null;
+}
+
 interface PricingShippingController extends ProbingController {
   webText(type: By, value: string): Promise<string>;
+  webExecute?(jscode: string): Promise<unknown>;
   webRequest(
     url: string,
     method?: string,
@@ -71,14 +105,11 @@ export async function extractShippingInfoFromAdPage(
   number | null,
   string[] | null,
 ]> {
-  if (!(await elementPresent(controller, By.CLASS_NAME, "boxedarticle--details--shipping"))) {
-    return ["NOT_APPLICABLE", null, null];
-  }
   try {
-    const shippingText = await controller.webText(
-      By.CLASS_NAME,
-      "boxedarticle--details--shipping",
-    );
+    const shippingText = await readShippingText(controller);
+    if (shippingText === null) {
+      return ["NOT_APPLICABLE", null, null];
+    }
     if (shippingText === "Nur Abholung") {
       return ["PICKUP", null, null];
     }
