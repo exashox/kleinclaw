@@ -48,6 +48,7 @@ import {
   elementPresent,
   type ProbingController,
 } from "./download-extractor/probe.js";
+import { reportPageStructure } from "./download-extractor/page-structure.js";
 import {
   contentHashForLoadedAd,
   toAd,
@@ -319,6 +320,16 @@ export class DownloadAdExtractor {
 
     info.created_on = await this.extractCreationDateFromAdPage();
     info.updated_on = null;
+
+    const missing = [
+      ...(info.images.length === 0 ? ["images"] : []),
+      ...(info.shipping_type === "NOT_APPLICABLE" ? ["shipping"] : []),
+      ...(info.created_on === null ? ["created_on"] : []),
+      ...(/^\s*\S+\s*[•·]\s*/.test(title) ? ["title_label"] : []),
+    ];
+    if (missing.length) {
+      await reportPageStructure(this.controller, adId, missing);
+    }
     info.content_hash = contentHashForLoadedAd(toAd(info, this.config.adDefaults));
     return info;
   }

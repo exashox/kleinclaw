@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.8 - 2026-11-21
+
+- miniclaw download: when the gallery, the shipping line, or the creation date
+  cannot be read, or the title starts with a state label, the download prints
+  `Page structure for ad <id>: ...` on stderr: where ad images, the shipping
+  line, dates, and state labels sit on the page (element paths and at most 60
+  characters of label text, never the description); this finds the selectors
+  of the logged-in ad page
+- `kleinanzeigen_sync` / `kleinanzeigen_sync_check`: `pageDiagnostics` passes
+  that structure on per Kleinanzeigen ID
+
 ## 0.5.7 - 2026-11-20
 
 - `kleinanzeigen_sync` / `kleinanzeigen_sync_check`: fields that could not be

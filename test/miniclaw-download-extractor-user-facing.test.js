@@ -502,3 +502,40 @@ describe("miniclaw download images and persistence", () => {
     }
   });
 });
+
+describe("miniclaw download page structure diagnostics", async () => {
+  const {
+    PAGE_STRUCTURE_SCRIPT,
+    reportPageStructure,
+  } = await import("../miniclaw/dist/download-extractor/page-structure.js");
+
+  it("ships a page script that parses", () => {
+    assert.doesNotThrow(() => new Function(`return ${PAGE_STRUCTURE_SCRIPT};`));
+    // Regex escapes must survive into the page (a plain template literal drops them).
+    assert.ok(PAGE_STRUCTURE_SCRIPT.includes(String.raw`/\s+/g`));
+    assert.ok(PAGE_STRUCTURE_SCRIPT.includes(String.raw`\bvor (einer|einem|\d+)\b`));
+  });
+
+  it("logs the structure with the missing parts and never fails the download", async () => {
+    const lines = [];
+    const structure = { images: [{ path: "div#gallery > figure", count: 6, distinct: 6 }] };
+    await reportPageStructure(
+      { webExecute: async () => JSON.stringify(structure) },
+      3568173226,
+      ["images"],
+      (line) => lines.push(line),
+    );
+    assert.equal(lines.length, 1);
+    const [prefix, json] = lines[0].split(/: (.*)/s);
+    assert.equal(prefix, "Page structure for ad 3568173226");
+    assert.deepEqual(JSON.parse(json), { missing: ["images"], structure });
+
+    await reportPageStructure(
+      { webExecute: async () => { throw new Error("page gone"); } },
+      1,
+      ["images"],
+      (line) => lines.push(line),
+    );
+    assert.equal(lines.length, 1, "a failing page script stays silent");
+  });
+});

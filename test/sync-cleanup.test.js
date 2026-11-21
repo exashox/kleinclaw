@@ -257,9 +257,17 @@ describe("two-way sync with Kleinanzeigen", () => {
       },
     };
     const before = await fs.readFile(path.join(ford, "ad.yaml"), "utf8");
-    const result = await syncKleinanzeigenAds({ confirm: true }, { ...config, commandRunner: fakeKleinanzeigen(online) });
+    const download = fakeKleinanzeigen(online);
+    const structure = { missing: ["images", "shipping"], structure: { images: [], shipping: [] } };
+    const runner = async (argv, options) => ({
+      ...(await download(argv, options)),
+      stderr: `Page structure for ad 3568173226: ${JSON.stringify(structure)}
+`,
+    });
+    const result = await syncKleinanzeigenAds({ confirm: true }, { ...config, commandRunner: runner });
     const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry]));
 
+    assert.deepEqual(result.pageDiagnostics, { 3568173226: structure }, "page structure is passed on");
     assert.equal(byId[6].status, "deleted_online");
     assert.equal(byId[3].status, "in_sync");
     assert.equal(byId[3].onlineImagesUnreadable, true);

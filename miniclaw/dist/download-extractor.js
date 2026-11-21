@@ -14,6 +14,7 @@ import { extractPricingInfoFromAdPage as extractPagePricingInfo, extractShipping
 import { renderDownloadAdFileStem as renderConfiguredDownloadAdFileStem, renderDownloadFolderName as renderConfiguredDownloadFolderName, renderDownloadNameWithBudget as renderConfiguredDownloadNameWithBudget, } from "./download-extractor/naming.js";
 import { fileExists, removeTreeWithRetries, saveDownloadedAd, STAGING_DIR_PREFIX, } from "./download-extractor/persistence.js";
 import { elementPresent, } from "./download-extractor/probe.js";
+import { reportPageStructure } from "./download-extractor/page-structure.js";
 import { contentHashForLoadedAd, toAd, } from "./model/ad-model.js";
 import { By, TimeoutError, } from "./web-primitives.js";
 export { sanitizeFolderName, } from "./download-extractor/naming.js";
@@ -137,6 +138,15 @@ export class DownloadAdExtractor {
         info.id = adId;
         info.created_on = await this.extractCreationDateFromAdPage();
         info.updated_on = null;
+        const missing = [
+            ...(info.images.length === 0 ? ["images"] : []),
+            ...(info.shipping_type === "NOT_APPLICABLE" ? ["shipping"] : []),
+            ...(info.created_on === null ? ["created_on"] : []),
+            ...(/^\s*\S+\s*[•·]\s*/.test(title) ? ["title_label"] : []),
+        ];
+        if (missing.length) {
+            await reportPageStructure(this.controller, adId, missing);
+        }
         info.content_hash = contentHashForLoadedAd(toAd(info, this.config.adDefaults));
         return info;
     }

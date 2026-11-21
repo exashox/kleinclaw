@@ -112,6 +112,9 @@ old and the new Kleinanzeigen ID (`previousId` in the outcome).
   ad under "Meine Anzeigen"; do not delete or republish on your own.
 - `onlineImagesUnreadable: true`: the gallery could not be read, so the images
   were not compared. Do not tell the user the ad has no images online.
+- `pageDiagnostics`: page structure for ads whose gallery, shipping line, or
+  date could not be read. Do not interpret it for the user; pass it on
+  unchanged when the user or the KleinClaw maintainer asks for it.
 - `not_checked` (with `partial: true`): the browser run hit its time limit
   before it reached these ads. Report what was checked and offer another sync
   with a smaller `maxAds`; do not call this a failure of those ads.
