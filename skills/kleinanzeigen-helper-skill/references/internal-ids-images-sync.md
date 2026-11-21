@@ -108,13 +108,16 @@ old and the new Kleinanzeigen ID (`previousId` in the outcome).
 - `not_found_online`: the ad may be deleted, expired, or paused. Ask before
   changing anything.
 - `deleted_online` / `sold_online`: the ad page in the logged-in browser marks
-  the ad as deleted or sold. Nothing was taken over. Ask the user to check the
-  ad under "Meine Anzeigen"; do not delete or republish on your own.
+  the ad as deleted or sold. Nothing was taken over. Kleinanzeigen shows a sold
+  ad as "Gelöscht" too, so ask the user whether the item was sold. If yes, mark
+  it sold locally with `kleinanzeigen_set_ad_fields` (`sold: true`); the sync
+  skips sold ads. Do not delete or republish on your own.
 - `onlineImagesUnreadable: true`: the gallery could not be read, so the images
   were not compared. Do not tell the user the ad has no images online.
-- `pageDiagnostics`: page structure for ads whose gallery, shipping line, or
-  date could not be read. Do not interpret it for the user; pass it on
-  unchanged when the user or the KleinClaw maintainer asks for it.
+- `pageDiagnostics`: the gallery, shipping line, or date of some ads could not
+  be read. The page structure is saved in `pageDiagnostics.file`
+  (`relativeToConfig`: next to the miniclaw `config.yaml`). Name the file to
+  the user; do not print or interpret its content.
 - `not_checked` (with `partial: true`): the browser run hit its time limit
   before it reached these ads. Report what was checked and offer another sync
   with a smaller `maxAds`; do not call this a failure of those ads.

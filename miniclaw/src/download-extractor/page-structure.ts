@@ -4,8 +4,14 @@
  * SPDX-ArtifactOfProjectHomePage: https://github.com/Second-Hand-Friends/kleinanzeigen-bot/
  */
 
+import fs from "node:fs/promises";
+import path from "node:path";
+
 export const PAGE_STRUCTURE_PREFIX = "Page structure for ad";
+/** When set, the structure is saved there as page-structure-<adId>.json. */
+export const PAGE_STRUCTURE_DIR_ENV = "MINICLAW_PAGE_STRUCTURE_DIR";
 const PAGE_STRUCTURE_LIMIT = 3000;
+const PAGE_STRUCTURE_FILE_LIMIT = 20000;
 
 interface PageStructureController {
   webExecute(jscode: string): Promise<unknown>;
@@ -63,12 +69,24 @@ export const PAGE_STRUCTURE_SCRIPT = String.raw`(() => {
   });
 })()`;
 
-/** Prints the page structure on stderr; never fails the download. */
+export interface ReportPageStructureOptions {
+  log?: (line: string) => void;
+  directory?: string;
+}
+
+/**
+ * Saves the page structure to `directory` (default: the
+ * MINICLAW_PAGE_STRUCTURE_DIR environment variable), otherwise prints it on
+ * stderr; never fails the download.
+ */
 export async function reportPageStructure(
   controller: PageStructureController,
   adId: number,
   missing: string[],
-  log: (line: string) => void = (line) => console.error(line),
+  {
+    log = (line) => console.error(line),
+    directory = process.env[PAGE_STRUCTURE_DIR_ENV],
+  }: ReportPageStructureOptions = {},
 ): Promise<void> {
   try {
     const raw = await controller.webExecute(PAGE_STRUCTURE_SCRIPT);
@@ -80,8 +98,18 @@ export async function reportPageStructure(
         structure = raw;
       }
     }
-    const line = JSON.stringify({ missing, structure }).slice(0, PAGE_STRUCTURE_LIMIT);
-    log(`${PAGE_STRUCTURE_PREFIX} ${adId}: ${line}`);
+    const text = JSON.stringify({ missing, structure });
+    if (directory) {
+      await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(
+        path.join(directory, `page-structure-${adId}.json`),
+        text.slice(0, PAGE_STRUCTURE_FILE_LIMIT),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      log(`${PAGE_STRUCTURE_PREFIX} ${adId} saved (missing: ${missing.join(", ")})`);
+      return;
+    }
+    log(`${PAGE_STRUCTURE_PREFIX} ${adId}: ${text.slice(0, PAGE_STRUCTURE_LIMIT)}`);
   } catch {
     // Diagnostics only.
   }

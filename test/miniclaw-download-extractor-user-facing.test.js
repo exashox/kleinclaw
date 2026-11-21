@@ -523,7 +523,7 @@ describe("miniclaw download page structure diagnostics", async () => {
       { webExecute: async () => JSON.stringify(structure) },
       3568173226,
       ["images"],
-      (line) => lines.push(line),
+      { log: (line) => lines.push(line), directory: "" },
     );
     assert.equal(lines.length, 1);
     const [prefix, json] = lines[0].split(/: (.*)/s);
@@ -534,8 +534,24 @@ describe("miniclaw download page structure diagnostics", async () => {
       { webExecute: async () => { throw new Error("page gone"); } },
       1,
       ["images"],
-      (line) => lines.push(line),
+      { log: (line) => lines.push(line), directory: "" },
     );
     assert.equal(lines.length, 1, "a failing page script stays silent");
+  });
+
+  it("saves the structure to a file when a directory is given", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "page-structure-"));
+    const lines = [];
+    await reportPageStructure(
+      { webExecute: async () => JSON.stringify({ images: [] }) },
+      42,
+      ["images", "shipping"],
+      { log: (line) => lines.push(line), directory },
+    );
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(path.join(directory, "page-structure-42.json"), "utf8")),
+      { missing: ["images", "shipping"], structure: { images: [] } },
+    );
+    assert.deepEqual(lines, ["Page structure for ad 42 saved (missing: images, shipping)"]);
   });
 });

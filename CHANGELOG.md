@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.9 - 2026-11-21
+
+- `kleinanzeigen_sync` / `kleinanzeigen_sync_check`: the page structure is
+  saved to `.kleinclaw/diagnostics/page-structure-<time>.json` next to the
+  miniclaw `config.yaml` (the five newest are kept); `pageDiagnostics` now
+  names the file and the missing parts per ad instead of carrying the whole
+  structure, which the agent runtime cut off
+- miniclaw download: with `MINICLAW_PAGE_STRUCTURE_DIR` set, the page
+  structure goes to `page-structure-<id>.json` there instead of stderr
+- sync: `deleted_online` / `sold_online` tells the agent that Kleinanzeigen
+  shows a sold ad as `Gelöscht` too and to mark a sold item with
+  `kleinanzeigen_set_ad_fields` (`sold: true`), so the sync skips it
+
 ## 0.5.8 - 2026-11-21
 
 - miniclaw download: when the gallery, the shipping line, or the creation date

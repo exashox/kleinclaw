@@ -4567,9 +4567,57 @@ function parsePageStructure(text) {
   }
 }
 
+const PAGE_DIAGNOSTICS_KEEP = 5;
+
+// The full structure is too large for a tool result; it goes to a file next to
+// the miniclaw config, and the result names the file and the missing parts.
+async function savePageDiagnostics(pageStructureById, cliConfig, now = new Date()) {
+  if (!pageStructureById.size) {
+    return null;
+  }
+  const directory = path.join(path.dirname(cliConfig.configPath), ".kleinclaw", "diagnostics");
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const name = `page-structure-${now.toISOString().replace(/[:.]/g, "-")}.json`;
+  const file = path.join(directory, name);
+  await fs.writeFile(
+    file,
+    `${JSON.stringify(Object.fromEntries(pageStructureById), null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  const old = (await fs.readdir(directory))
+    .filter((entry) => /^page-structure-.*\.json$/.test(entry))
+    .sort()
+    .slice(0, -PAGE_DIAGNOSTICS_KEEP);
+  await Promise.all(old.map((entry) => fs.rm(path.join(directory, entry), { force: true })));
+  return {
+    file,
+    relativeToConfig: path.posix.join(".kleinclaw", "diagnostics", name),
+    missing: Object.fromEntries(
+      [...pageStructureById].map(([id, entry]) => [id, Array.isArray(entry?.missing) ? entry.missing : []]),
+    ),
+  };
+}
+
 function pageDiagnosticsField(download) {
-  const entries = download.pageStructureById ? [...download.pageStructureById] : [];
-  return entries.length ? { pageDiagnostics: Object.fromEntries(entries) } : {};
+  return download.pageDiagnostics ? { pageDiagnostics: download.pageDiagnostics } : {};
+}
+
+async function readPageStructureFiles(directory, pageStructureById) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(directory);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const match = /^page-structure-(\d+)\.json$/.exec(entry);
+    if (match) {
+      pageStructureById.set(
+        match[1],
+        parsePageStructure(await fs.readFile(path.join(directory, entry), "utf8").catch(() => "")),
+      );
+    }
+  }
 }
 
 async function downloadOnlineAds(adIds, cliConfig, { timeoutMs = cliConfig.liveTimeoutMs } = {}) {
@@ -4584,11 +4632,12 @@ async function downloadOnlineAds(adIds, cliConfig, { timeoutMs = cliConfig.liveT
       cliConfig,
     );
     args.push(`--download-dir=${downloadDir}`);
+    const structureDir = path.join(downloadDir, ".page-structure");
     const result = await runRuntimeProcess(cliConfig.runtime, args, {
       cwd: cliConfig.cwd,
       timeoutMs,
       maxBufferChars: cliConfig.maxOutputChars,
-      env: buildChildEnv(),
+      env: { ...buildChildEnv(), MINICLAW_PAGE_STRUCTURE_DIR: structureDir },
       commandRunner: cliConfig.commandRunner,
     });
     // After a timeout the folder still holds every ad that was read completely.
@@ -4610,7 +4659,9 @@ async function downloadOnlineAds(adIds, cliConfig, { timeoutMs = cliConfig.liveT
     for (const match of rawText.matchAll(/Page structure for ad (\d+): (.*)/g)) {
       pageStructureById.set(match[1], parsePageStructure(match[2]));
     }
-    return { downloadDir, result, onlineById, failedById, pageStructureById, hashing, cleanup };
+    await readPageStructureFiles(structureDir, pageStructureById);
+    const pageDiagnostics = await savePageDiagnostics(pageStructureById, cliConfig).catch(() => null);
+    return { downloadDir, result, onlineById, failedById, pageDiagnostics, hashing, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
@@ -4805,7 +4856,8 @@ export async function syncCheckKleinanzeigenAd(params = {}, config = {}, { now =
         changed: false,
         nextActions: [
           "the ad page marks the ad as deleted or sold; nothing was taken over. " +
-            "Ask the user to check the ad under 'Meine Anzeigen'",
+            "Kleinanzeigen shows a sold ad as 'Gelöscht' too. Ask the user whether the item " +
+            "was sold; if yes, mark it sold locally with kleinanzeigen_set_ad_fields (sold: true)",
         ],
         ...localSuccessProcessFields(),
       };
@@ -5036,8 +5088,10 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     if (counts.deleted_online || counts.sold_online) {
       nextActions.push(
         "deleted_online / sold_online: the ad page in the logged-in browser marks the ad as " +
-          "deleted or sold; nothing was taken over. Ask the user to check the ad under " +
-          "'Meine Anzeigen' before changing anything",
+          "deleted or sold; nothing was taken over. Kleinanzeigen shows a sold ad as " +
+          "'Gelöscht' too. Ask the user whether the item was sold; if yes, mark it sold " +
+          "locally with kleinanzeigen_set_ad_fields (sold: true) so the sync skips it. " +
+          "Do not delete or republish on your own",
       );
     }
     if (results.some((entry) => entry.onlineImagesUnreadable)) {
@@ -5057,8 +5111,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     const diagnostics = pageDiagnosticsField(download);
     if (diagnostics.pageDiagnostics) {
       nextActions.push(
-        "pageDiagnostics: some parts of the ad page could not be read; pass pageDiagnostics " +
-          "unchanged to the KleinClaw maintainer when the user asks about it",
+        "pageDiagnostics: some parts of the ad page could not be read; the page structure " +
+          "is saved in pageDiagnostics.file. Name that file to the user; do not print its content",
       );
     }
 

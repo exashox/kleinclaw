@@ -259,15 +259,23 @@ describe("two-way sync with Kleinanzeigen", () => {
     const before = await fs.readFile(path.join(ford, "ad.yaml"), "utf8");
     const download = fakeKleinanzeigen(online);
     const structure = { missing: ["images", "shipping"], structure: { images: [], shipping: [] } };
-    const runner = async (argv, options) => ({
-      ...(await download(argv, options)),
-      stderr: `Page structure for ad 3568173226: ${JSON.stringify(structure)}
-`,
-    });
+    const runner = async (argv, options) => {
+      // miniclaw saves the structure where the plugin tells it to.
+      const directory = options.env.MINICLAW_PAGE_STRUCTURE_DIR;
+      await fs.mkdir(directory, { recursive: true });
+      await fs.writeFile(path.join(directory, "page-structure-3568173226.json"), JSON.stringify(structure));
+      return download(argv, options);
+    };
     const result = await syncKleinanzeigenAds({ confirm: true }, { ...config, commandRunner: runner });
     const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry]));
 
-    assert.deepEqual(result.pageDiagnostics, { 3568173226: structure }, "page structure is passed on");
+    assert.deepEqual(result.pageDiagnostics.missing, { 3568173226: ["images", "shipping"] });
+    assert.match(result.pageDiagnostics.relativeToConfig, /^\.kleinclaw\/diagnostics\/page-structure-.*\.json$/);
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(result.pageDiagnostics.file, "utf8")),
+      { 3568173226: structure },
+      "the full structure is kept in the file, outside the tool result",
+    );
     assert.equal(byId[6].status, "deleted_online");
     assert.equal(byId[3].status, "in_sync");
     assert.equal(byId[3].onlineImagesUnreadable, true);
@@ -278,7 +286,7 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.equal(fordAfter.shipping_type, "PICKUP");
     assert.notEqual(await fs.readFile(path.join(ford, "ad.yaml"), "utf8"), before, "sync state is recorded");
     assert.equal((await readAd(ram)).title, "Corsair Vengeance LPX 16GB", "nothing taken over from a deleted page");
-    assert.ok(result.nextActions.some((action) => /Meine Anzeigen/.test(action)));
+    assert.ok(result.nextActions.some((action) => /sold: true/.test(action)), "suggests marking it sold");
   });
 
   it("stops the browser before the call budget and reports a partial result", async () => {

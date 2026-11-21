@@ -1,4 +1,6 @@
 export declare const PAGE_STRUCTURE_PREFIX = "Page structure for ad";
+/** When set, the structure is saved there as page-structure-<adId>.json. */
+export declare const PAGE_STRUCTURE_DIR_ENV = "MINICLAW_PAGE_STRUCTURE_DIR";
 interface PageStructureController {
     webExecute(jscode: string): Promise<unknown>;
 }
@@ -9,6 +11,14 @@ interface PageStructureController {
  * find selectors when Kleinanzeigen changes the layout.
  */
 export declare const PAGE_STRUCTURE_SCRIPT: string;
-/** Prints the page structure on stderr; never fails the download. */
-export declare function reportPageStructure(controller: PageStructureController, adId: number, missing: string[], log?: (line: string) => void): Promise<void>;
+export interface ReportPageStructureOptions {
+    log?: (line: string) => void;
+    directory?: string;
+}
+/**
+ * Saves the page structure to `directory` (default: the
+ * MINICLAW_PAGE_STRUCTURE_DIR environment variable), otherwise prints it on
+ * stderr; never fails the download.
+ */
+export declare function reportPageStructure(controller: PageStructureController, adId: number, missing: string[], { log, directory, }?: ReportPageStructureOptions): Promise<void>;
 export {};
