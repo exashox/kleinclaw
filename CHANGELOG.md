@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.11 - 2026-11-21
+
+- sync: `shipping_costs` is not compared when the local ad uses carriers
+  (`shipping_options`, e.g. `DHL_5`); Kleinanzeigen sets that price itself and
+  shows the cheapest one (`Versand ab 7,69 €`), so a carrier price change is no
+  online edit
+- sync: taking over a changed `shipping_type` (`PICKUP` to `SHIPPING`) also
+  takes over the online `shipping_costs` and `shipping_options`, so the local
+  ad does not end up with shipping but no price or carrier
+
 ## 0.5.10 - 2026-11-21
 
 - miniclaw download reads the ad page layout of 2026-11 (gallery next to

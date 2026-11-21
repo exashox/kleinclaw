@@ -4513,6 +4513,15 @@ function compareWithOnline(local, online, builtinCategories) {
     if (onlineValueUnknown(field, online)) {
       continue;
     }
+    if (
+      field === "shipping_costs" &&
+      Array.isArray(local.shipping_options) &&
+      local.shipping_options.length > 0
+    ) {
+      // With carriers (DHL, Hermes) Kleinanzeigen sets the price; the local
+      // shipping_costs is not used on publish, and the page shows "ab <cheapest>".
+      continue;
+    }
     const localValue = syncComparable(field, local[field], local, builtinCategories);
     const onlineValue = syncComparable(field, online[field], local, builtinCategories);
     if (field === "category" ? !sameCategory(localValue, onlineValue)
@@ -4711,6 +4720,18 @@ async function applyOnlineVersion(adConfigPath, assessment, onlineEntry, { field
       : assessment.online[field];
     text = replaceTopLevelYamlEntry(text, field, yamlLinesForEntry(field, value));
     applied.push(field);
+  }
+  // A new shipping type needs its price and carriers too; they are not
+  // compared on their own when the local ad never had them.
+  if (applied.includes("shipping_type") && assessment.online.shipping_type === "SHIPPING") {
+    for (const companion of ["shipping_costs", "shipping_options"]) {
+      const value = assessment.online[companion];
+      if (applied.includes(companion) || value === undefined || value === null) {
+        continue;
+      }
+      text = replaceTopLevelYamlEntry(text, companion, yamlLinesForEntry(companion, value));
+      applied.push(companion);
+    }
   }
   const importedImages = [];
   if (images && assessment.onlineImages.length) {

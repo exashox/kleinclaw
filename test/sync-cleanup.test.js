@@ -220,6 +220,53 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.equal(byId[2].status, "in_sync");
   });
 
+  it("takes over shipping with price and carrier, and ignores carrier price changes", async () => {
+    const { adRoot, config } = await workspace();
+    const ad = async (name, internalId, id, shippingLines) => {
+      const directory = await writeAd(adRoot, name, [
+        `internal_id: ${internalId}`,
+        "active: true",
+        `id: ${id}`,
+        `title: "Artikel ${internalId}"`,
+        'description: "Gut erhalten."',
+        'category: "210/217"',
+        "price: 50",
+        "price_type: NEGOTIABLE",
+        ...shippingLines,
+        "images:",
+        '  - "1.jpg"',
+      ]);
+      await fs.writeFile(path.join(directory, "1.jpg"), `front ${name}`);
+      await markPublished(directory);
+      return directory;
+    };
+    // #3: pickup locally, shipping switched on on the website.
+    const ford = await ad("ford", 3, "3568173226", ["shipping_type: PICKUP"]);
+    // #10: DHL carrier; Kleinanzeigen raised the DHL price.
+    const hummel = await ad("hummel", 10, "3575879092", [
+      "shipping_type: SHIPPING",
+      "shipping_costs: 6.99",
+      "shipping_options:",
+      "  - DHL_5",
+    ]);
+    const shipping = ["shipping_type: SHIPPING", "shipping_costs: 7.69", "shipping_options:", "  - DHL_5"];
+    const online = {
+      3568173226: { title: "Artikel 3", description: "Gut erhalten.", category: "210/217", price: 50, extra: shipping },
+      3575879092: { title: "Artikel 10", description: "Gut erhalten.", category: "210/217", price: 50, extra: shipping },
+    };
+    const result = await syncKleinanzeigenAds({ confirm: true }, { ...config, commandRunner: fakeKleinanzeigen(online) });
+    const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry]));
+
+    assert.equal(byId[10].status, "in_sync", "a carrier price is set by Kleinanzeigen");
+    assert.equal((await readAd(hummel)).shipping_costs, 6.99);
+    assert.equal(byId[3].status, "pulled");
+    assert.deepEqual(byId[3].applied, ["shipping_type", "shipping_costs", "shipping_options"]);
+    const fordAfter = await readAd(ford);
+    assert.equal(fordAfter.shipping_type, "SHIPPING");
+    assert.equal(fordAfter.shipping_costs, 7.69);
+    assert.deepEqual(fordAfter.shipping_options, ["DHL_5"]);
+  });
+
   it("does not mistake unreadable page parts or state labels for online edits", async () => {
     const { adRoot, config } = await workspace();
     const ad = async (name, internalId, id, title, category) => {
