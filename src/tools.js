@@ -928,8 +928,10 @@ function sendMessageTool(config) {
       "wrote something newer than afterMessageId, if the last message is already the " +
       "seller's, if the conversation is about another ad, or if the text names a price " +
       "below the ad's minPrice (the asking price when none is set). Text with phone " +
-      "numbers, email addresses, links, or account numbers is refused. Cannot accept or " +
-      "decline \"Direkt kaufen\" offers.",
+      "numbers, email addresses, links, or account numbers is refused. To send the user's " +
+      "own bank details (plugin setting paymentDetails), write {bankverbindung} in the text " +
+      "and set includePaymentDetails: true; only after the user agreed to a bank transfer " +
+      "with this buyer. Cannot accept or decline \"Direkt kaufen\" offers.",
     parameters: objectSchema(
       {
         confirm: confirmSchema,
@@ -953,7 +955,16 @@ function sendMessageTool(config) {
           type: "string",
           minLength: 1,
           maxLength: 1000,
-          description: "The reply as the buyer will read it.",
+          description:
+            "The reply as the buyer will read it. {bankverbindung} marks where the " +
+            "configured bank details go.",
+        },
+        includePaymentDetails: {
+          type: "boolean",
+          description:
+            "Replace {bankverbindung} with the user's bank details from the plugin settings " +
+            "(appended when the placeholder is missing). Only after the user agreed to a bank " +
+            "transfer with this buyer. Defaults to false.",
         },
         markRead: {
           type: "boolean",

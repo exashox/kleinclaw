@@ -67,6 +67,8 @@ export interface ReadCommandOptions {
   text?: string;
   afterMessageId?: string;
   adId?: string;
+  /** send-message: the account owner's configured block (bank details), exempt from content checks. */
+  allowedText?: string;
   markRead?: boolean;
 }
 

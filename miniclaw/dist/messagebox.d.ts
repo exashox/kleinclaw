@@ -120,4 +120,11 @@ export declare const MESSAGEBOX_READ_JS: string;
  */
 export declare function findMessageProblems(text: string): string[];
 export declare function normalizeMessageboxRequest(request: MessageboxRequest): Required<MessageboxRequest>;
-export declare function normalizeMessageboxSendRequest(request: Omit<MessageboxSendRequest, "action">): MessageboxSendRequest;
+export interface MessageboxSendInput extends Omit<MessageboxSendRequest, "action"> {
+    /**
+     * Exact block the account owner configured (their own bank details). It is
+     * exempt from the content checks; everything else in the text is checked.
+     */
+    allowedText?: string | null;
+}
+export declare function normalizeMessageboxSendRequest(request: MessageboxSendInput): MessageboxSendRequest;

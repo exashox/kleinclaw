@@ -3416,6 +3416,85 @@ function assessOffer(offeredPrice, localAd) {
 }
 
 const MESSAGE_ID_RE = /^[A-Za-z0-9:@._+-]{1,200}$/;
+const PAYMENT_DETAILS_PLACEHOLDER = "{bankverbindung}";
+const PAYMENT_DETAILS_PLACEHOLDER_RE = /\{bankverbindung\}/gi;
+
+function ibanChecksumValid(iban) {
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
+  let remainder = 0;
+  for (const char of rearranged) {
+    const digits = /\d/.test(char) ? char : String(char.charCodeAt(0) - 55);
+    for (const digit of digits) {
+      remainder = (remainder * 10 + Number(digit)) % 97;
+    }
+  }
+  return remainder === 1;
+}
+
+/**
+ * The account owner's own bank details from the plugin settings, as the block
+ * that replaces {bankverbindung} in a reply; null when none are configured.
+ */
+export function resolvePaymentDetails(config = {}) {
+  const raw = config.paymentDetails;
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("plugin setting paymentDetails must be an object with accountHolder and iban");
+  }
+  const accountHolder = normalizeOptionalString(raw.accountHolder);
+  if (!accountHolder || accountHolder.length > 70 || /[\r\n]/.test(accountHolder)) {
+    throw new Error("plugin setting paymentDetails.accountHolder must be one line of at most 70 characters");
+  }
+  const iban = String(raw.iban ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(iban) || !ibanChecksumValid(iban)) {
+    throw new Error("plugin setting paymentDetails.iban is not a valid IBAN (check for typos)");
+  }
+  const bic = raw.bic === undefined || raw.bic === null || raw.bic === ""
+    ? null
+    : String(raw.bic).replace(/\s+/g, "").toUpperCase();
+  if (bic !== null && !/^[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?$/.test(bic)) {
+    throw new Error("plugin setting paymentDetails.bic is not a valid BIC");
+  }
+  return {
+    block: [
+      `Kontoinhaber: ${accountHolder}`,
+      `IBAN: ${iban.replace(/(.{4})/g, "$1 ").trim()}`,
+      ...(bic ? [`BIC: ${bic}`] : []),
+    ].join("\n"),
+  };
+}
+
+/** Reply text with the configured bank details in place of {bankverbindung}. */
+function insertPaymentDetails(text, includePaymentDetails, config) {
+  const placeholders = text.match(PAYMENT_DETAILS_PLACEHOLDER_RE)?.length ?? 0;
+  if (!includePaymentDetails) {
+    if (placeholders) {
+      throw new Error(
+        `text contains ${PAYMENT_DETAILS_PLACEHOLDER}; set includePaymentDetails: true to send the bank details`,
+      );
+    }
+    return { text: text.trim(), allowedText: null };
+  }
+  if (placeholders > 1) {
+    throw new Error(`use ${PAYMENT_DETAILS_PLACEHOLDER} only once`);
+  }
+  const details = resolvePaymentDetails(config);
+  if (!details) {
+    throw new Error(
+      "no bank details configured: ask the user to add paymentDetails (accountHolder, iban) " +
+        "to the KleinClaw plugin settings; never type bank details into the text yourself",
+    );
+  }
+  const withPlaceholder = placeholders
+    ? text.trim()
+    : `${text.trim()}\n\n${PAYMENT_DETAILS_PLACEHOLDER}`;
+  return {
+    text: withPlaceholder.replace(PAYMENT_DETAILS_PLACEHOLDER_RE, () => details.block),
+    allowedText: details.block,
+  };
+}
 
 export async function sendKleinanzeigenMessage(params = {}, config = {}) {
   if (params.confirm !== true) {
@@ -3439,6 +3518,7 @@ export async function sendKleinanzeigenMessage(params = {}, config = {}) {
   if (problems.length) {
     throw new Error(`reply not sent: ${problems.join("; ")}`);
   }
+  const reply = insertPaymentDetails(params.text, params.includePaymentDetails === true, config);
   const managed = await managedAdsById(config);
   if (!managed) {
     throw new Error("plugin config must set adRoots before replies can be sent");
@@ -3455,12 +3535,13 @@ export async function sendKleinanzeigenMessage(params = {}, config = {}) {
     (localAd.price !== null && localAd.priceType !== "GIVE_AWAY" ? Math.floor(localAd.price) : null);
   const args = [
     `--conversation=${params.conversationId}`,
-    `--text=${params.text.trim()}`,
+    `--text=${reply.text}`,
     `--after=${params.afterMessageId}`,
     `--ad-id=${adId}`,
   ];
   if (floor !== null) args.push(`--min-price=${floor}`);
   if (params.markRead !== false) args.push("--mark-read");
+  if (reply.allowedText !== null) args.push(`--allow-text=${reply.allowedText}`);
   const result = messageboxOutcome(
     await runBrowserRead("send_message", "send-message", args, config),
   );
@@ -3468,6 +3549,7 @@ export async function sendKleinanzeigenMessage(params = {}, config = {}) {
     ...result,
     minPriceApplied: floor,
     minPriceSource: localAd.minPrice !== null ? "minPrice" : floor !== null ? "asking price" : null,
+    ...(reply.allowedText !== null ? { paymentDetailsIncluded: result.status === "sent" } : {}),
     ...(result.status === "refused" && result.reason === "conversation_moved_on"
       ? { nextActions: ["read the conversation again, then answer the newest messages"] }
       : {}),

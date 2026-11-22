@@ -409,9 +409,15 @@ export function normalizeMessageboxRequest(request: MessageboxRequest): Required
   };
 }
 
-export function normalizeMessageboxSendRequest(
-  request: Omit<MessageboxSendRequest, "action">,
-): MessageboxSendRequest {
+export interface MessageboxSendInput extends Omit<MessageboxSendRequest, "action"> {
+  /**
+   * Exact block the account owner configured (their own bank details). It is
+   * exempt from the content checks; everything else in the text is checked.
+   */
+  allowedText?: string | null;
+}
+
+export function normalizeMessageboxSendRequest(request: MessageboxSendInput): MessageboxSendRequest {
   const conversationId = request.conversationId?.trim() ?? "";
   if (!CONVERSATION_ID_PATTERN.test(conversationId)) {
     throw new Error("conversation id must contain only letters, digits, ':', '_' or '-'");
@@ -425,7 +431,15 @@ export function normalizeMessageboxSendRequest(
     throw new Error("the numeric ad id of the conversation is required");
   }
   const text = request.text?.trim() ?? "";
-  const problems = findMessageProblems(text);
+  const allowedText = request.allowedText?.trim() || null;
+  if (allowedText !== null && !text.includes(allowedText)) {
+    throw new Error("the allowed block is not part of the reply");
+  }
+  const checked = allowedText === null ? text : text.split(allowedText).join(" ");
+  const problems = [
+    ...(text.length > MESSAGE_MAX_CHARS ? [`the reply is longer than ${MESSAGE_MAX_CHARS} characters`] : []),
+    ...findMessageProblems(checked),
+  ].filter((problem, index, all) => all.indexOf(problem) === index);
   if (problems.length) {
     throw new Error(`reply not sent: ${problems.join("; ")}`);
   }

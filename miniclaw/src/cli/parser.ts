@@ -39,6 +39,7 @@ const READ_OPTIONS: ReadonlyArray<readonly [string, keyof ReadCommandOptions, "s
   ["--text", "text", "string"],
   ["--after", "afterMessageId", "string"],
   ["--ad-id", "adId", "string"],
+  ["--allow-text", "allowedText", "string"],
 ];
 
 function readNumberOption(name: string, value: string): number {

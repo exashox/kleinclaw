@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.12 - 2026-11-22
+
+- new plugin setting `paymentDetails` (`accountHolder`, `iban`, optional
+  `bic`; IBAN checksum verified): your own bank details for buyers who pay by
+  transfer
+- `kleinanzeigen_send_message`: `includePaymentDetails: true` replaces
+  `{bankverbindung}` in the text with the configured bank details (appended if
+  the placeholder is missing). The agent never types them; any other account
+  number, phone number, email, or link is still refused. The reply goes
+  through the message API, so the web chat's fraud warning dialog does not
+  appear
+- miniclaw `send-message`: `--allow-text=<TEXT>` exempts exactly that block
+  from the content checks
+- skill: bank transfer only after the user agreed for this buyer; replies never
+  through the browser's web chat, warnings are never clicked through
+
 ## 0.5.11 - 2026-11-21
 
 - sync: `shipping_costs` is not compared when the local ad uses carriers

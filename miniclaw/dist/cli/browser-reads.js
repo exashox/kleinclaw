@@ -134,6 +134,7 @@ export async function runSendMessage(parsed, workspace, openSession = openLiveRe
             expectedAdId: parsed.read?.adId ?? "",
             minPrice: parsed.read?.minPrice ?? null,
             markRead: parsed.read?.markRead === true,
+            allowedText: parsed.read?.allowedText ?? null,
         });
     }
     catch (error) {

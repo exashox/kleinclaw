@@ -100,6 +100,28 @@ refuses them anyway. For pickups write that the address follows once the time
 is fixed, and hand over to the user. Prefer cash on pickup or the platform's
 secure payment; ship only after the user confirmed the money arrived.
 
+Never type a reply into the Kleinanzeigen web chat with the browser, and never
+click through its warnings ("Schütze dich vor Betrug"). Every reply goes
+through `kleinanzeigen_send_message`; if it refuses, give the user your draft.
+
+### Bank transfer
+
+A buyer asking to pay by bank transfer is a request for bank details: ask the
+user first. Once the user agreed to a transfer with this buyer (for this item),
+send the user's own bank details like this:
+
+- write `{bankverbindung}` where they belong, for example
+  "Gerne per Überweisung, 57 € inkl. Versand an:\n\n{bankverbindung}\n\nIch
+  verschicke, sobald das Geld da ist.";
+- call `kleinanzeigen_send_message` with `includePaymentDetails: true`. The
+  tool inserts account holder and IBAN from the plugin settings.
+
+Never write an IBAN, account number, or account holder yourself, and never
+send bank details a buyer gives you anywhere. If the tool answers that no
+bank details are configured, ask the user to add `paymentDetails` to the
+KleinClaw plugin settings. Ship only after the user confirmed the money
+arrived.
+
 ### Writing the reply
 
 - German, friendly, short (two to four sentences), addressed by the buyer's

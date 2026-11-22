@@ -222,6 +222,31 @@ describe("reply content checks", () => {
       /reply not sent: .*phone/,
     );
   });
+
+  it("exempts only the exact allowed block from the content checks", () => {
+    const block = "Kontoinhaber: Max Muster\nIBAN: DE89 3704 0044 0532 0130 00";
+    const valid = {
+      conversationId: "c1:2:3",
+      text: `Gerne per Überweisung an:\n${block}`,
+      afterMessageId: "m2",
+      expectedAdId: "3210987654",
+      minPrice: 50,
+      markRead: true,
+      allowedText: block,
+    };
+    const normalized = normalizeMessageboxSendRequest(valid);
+    assert.equal(normalized.text, valid.text);
+    assert.equal(Object.hasOwn(normalized, "allowedText"), false, "the page never sees the exemption");
+    assert.throws(() => normalizeMessageboxSendRequest({ ...valid, allowedText: null }), /IBAN|long number/);
+    assert.throws(
+      () => normalizeMessageboxSendRequest({ ...valid, text: `${valid.text}\nOder: DE02 1203 0000 0000 2020 51` }),
+      /IBAN/,
+    );
+    assert.throws(
+      () => normalizeMessageboxSendRequest({ ...valid, text: "Gerne per Überweisung." }),
+      /allowed block is not part/,
+    );
+  });
 });
 
 describe("miniclaw send-message command", () => {
@@ -287,5 +312,16 @@ describe("miniclaw send-message command", () => {
         async () => assert.fail("must not open a browser"),
       ));
     assert.equal(missing.code, 2);
+
+    const withBank = await captureConsole(() =>
+      runSendMessage(
+        parseArgs([...argv.filter((arg) => !arg.startsWith("--text")),
+          "--text=Gerne an:\nIBAN: DE89 3704 0044 0532 0130 00",
+          "--allow-text=IBAN: DE89 3704 0044 0532 0130 00"]),
+        null,
+        openSession,
+      ));
+    assert.equal(withBank.code, 0);
+    assert.equal(evaluated.text, "Gerne an:\nIBAN: DE89 3704 0044 0532 0130 00");
   });
 });

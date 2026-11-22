@@ -2,7 +2,7 @@
   "id": "kleinclaw",
   "name": "KleinClaw",
   "description": "Kleinanzeigen tools that can change live listings, edit local browser settings, and run the embedded miniclaw browser runtime with redacted output.",
-  "version": "0.5.11",
+  "version": "0.5.12",
   "activation": {
     "onStartup": true
   },
@@ -104,6 +104,27 @@
         ],
         "default": "all",
         "description": "Approval mode for tool runs. Use all for every tool, mutating for side-effect tools only, or none to rely on tool-level confirm gates."
+      },
+      "paymentDetails": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "accountHolder",
+          "iban"
+        ],
+        "properties": {
+          "accountHolder": {
+            "type": "string",
+            "maxLength": 70
+          },
+          "iban": {
+            "type": "string"
+          },
+          "bic": {
+            "type": "string"
+          }
+        },
+        "description": "Your own bank details for buyers who pay by transfer. kleinanzeigen_send_message inserts them for {bankverbindung} when includePaymentDetails is true; no other account numbers are ever sent."
       }
     }
   }

@@ -2120,4 +2120,54 @@ describe("negotiation and replies", () => {
     );
     assert.equal(calls.length, callsBefore, "refused replies never reach the browser");
   });
+
+  it("inserts only the configured bank details for {bankverbindung}", async () => {
+    const { calls, config: base } = await workspaceWithAd();
+    const config = {
+      ...base,
+      paymentDetails: { accountHolder: "Max Muster", iban: "de89370400440532013000", bic: "COBADEFFXXX" },
+    };
+    const block = "Kontoinhaber: Max Muster\nIBAN: DE89 3704 0044 0532 0130 00\nBIC: COBADEFFXXX";
+
+    const sent = await sendKleinanzeigenMessage(
+      reply({ text: "Gerne per Überweisung an:\n{bankverbindung}\nDanke!", includePaymentDetails: true }),
+      config,
+    );
+    assert.equal(sent.paymentDetailsIncluded, true);
+    let args = calls.at(-1);
+    assert.ok(args.includes(`--text=Gerne per Überweisung an:\n${block}\nDanke!`));
+    assert.ok(args.includes(`--allow-text=${block}`));
+
+    await sendKleinanzeigenMessage(reply({ text: "Gerne per Überweisung.", includePaymentDetails: true }), config);
+    args = calls.at(-1);
+    assert.ok(args.includes(`--text=Gerne per Überweisung.\n\n${block}`), "appended without placeholder");
+
+    await sendKleinanzeigenMessage(reply(), config);
+    assert.ok(!calls.at(-1).some((arg) => arg.startsWith("--allow-text")));
+
+    const callsBefore = calls.length;
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(reply({ text: "An: {bankverbindung}" }), config),
+      /includePaymentDetails: true/,
+    );
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(
+        reply({ text: "IBAN DE89 3704 0044 0532 0130 00 {bankverbindung}", includePaymentDetails: true }),
+        config,
+      ),
+      /reply not sent: .*IBAN|long number/,
+    );
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(reply({ text: "{bankverbindung}", includePaymentDetails: true }), base),
+      /no bank details configured/,
+    );
+    await assert.rejects(
+      () => sendKleinanzeigenMessage(
+        reply({ text: "{bankverbindung}", includePaymentDetails: true }),
+        { ...config, paymentDetails: { accountHolder: "Max Muster", iban: "DE89370400440532013001" } },
+      ),
+      /not a valid IBAN/,
+    );
+    assert.equal(calls.length, callsBefore, "refused replies never reach the browser");
+  });
 });

@@ -26,6 +26,7 @@ const READ_OPTIONS = [
     ["--text", "text", "string"],
     ["--after", "afterMessageId", "string"],
     ["--ad-id", "adId", "string"],
+    ["--allow-text", "allowedText", "string"],
 ];
 function readNumberOption(name, value) {
     const trimmed = value.trim();

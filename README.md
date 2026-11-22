@@ -218,6 +218,13 @@ Plugin config fields:
   asks only for side-effect tools. Choosing **Always allow** stores `none`,
   which disables KleinClaw's OpenClaw prompt while preserving tool-level
   `confirm: true` gates.
+- `paymentDetails`: optional, your own bank details for buyers who pay by
+  transfer: `{ "accountHolder": "…", "iban": "DE…", "bic": "…" }` (`bic`
+  optional; the IBAN checksum is verified). The agent never types them: it
+  writes `{bankverbindung}` in a reply and sets `includePaymentDetails: true` on
+  `kleinanzeigen_send_message`, which inserts the block. Any other account
+  number in a reply is still refused. Replies go through the message API, so
+  the web chat's fraud warning dialog does not appear.
 
 The `full` tool profile exposes KleinClaw after installation without a separate
 tool grant. The `coding` profile filters arbitrary native plugin tools, so add

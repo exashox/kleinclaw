@@ -30,6 +30,9 @@
   confirmation. Needs `afterMessageId` (= `newestMessageId`) and refuses when the
   buyer wrote something newer, when it is the buyer's turn, or when the text
   names a price below the ad's `minPrice` (asking price if none is set).
+  `includePaymentDetails: true` puts the user's configured bank details in
+  place of `{bankverbindung}` (only after the user agreed to a transfer; see
+  negotiation.md). Never send replies through the web chat in the browser.
 - `kleinanzeigen_read_ad`: read one existing ad config under configured
   `adRoots`, with contact fields redacted by default.
 - `kleinanzeigen_images_list`: list image files under one configured ad

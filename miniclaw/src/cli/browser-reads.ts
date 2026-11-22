@@ -186,6 +186,7 @@ export async function runSendMessage(
       expectedAdId: parsed.read?.adId ?? "",
       minPrice: parsed.read?.minPrice ?? null,
       markRead: parsed.read?.markRead === true,
+      allowedText: parsed.read?.allowedText ?? null,
     });
   } catch (error) {
     console.error(errorMessage(error));

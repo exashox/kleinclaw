@@ -314,7 +314,15 @@ export function normalizeMessageboxSendRequest(request) {
         throw new Error("the numeric ad id of the conversation is required");
     }
     const text = request.text?.trim() ?? "";
-    const problems = findMessageProblems(text);
+    const allowedText = request.allowedText?.trim() || null;
+    if (allowedText !== null && !text.includes(allowedText)) {
+        throw new Error("the allowed block is not part of the reply");
+    }
+    const checked = allowedText === null ? text : text.split(allowedText).join(" ");
+    const problems = [
+        ...(text.length > MESSAGE_MAX_CHARS ? [`the reply is longer than ${MESSAGE_MAX_CHARS} characters`] : []),
+        ...findMessageProblems(checked),
+    ].filter((problem, index, all) => all.indexOf(problem) === index);
     if (problems.length) {
         throw new Error(`reply not sent: ${problems.join("; ")}`);
     }
