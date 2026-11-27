@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.13 - 2026-11-27
+
+- sync: when the browser run ends early (lost browser connection, browser
+  restart, crash), ads it did not reach are `not_checked` instead of
+  `not_found_online`, and the result is `partial`. Before, a restarted browser
+  made every remaining ad look missing online
+
 ## 0.5.12 - 2026-11-22
 
 - new plugin setting `paymentDetails` (`accountHolder`, `iban`, optional

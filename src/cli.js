@@ -5068,6 +5068,9 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     timeoutMs: syncProcessTimeoutMs(params, cliConfig),
   });
   const timedOut = download.result.timedOut === true;
+  // A run that ended early (timeout, lost browser connection, crash) did not
+  // reach every ad; a missing ad then says nothing about the ad online.
+  const endedEarly = timedOut || download.result.ok !== true;
   try {
     if (download.onlineById.size === 0 && download.failedById.size === 0) {
       return downloadFailurePayload(base, download, config, cliConfig);
@@ -5096,8 +5099,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
         continue;
       }
       if (!onlineEntry) {
-        // After a timeout, a missing ad was most likely not reached yet.
-        results.push({ ...reference, status: timedOut ? "not_checked" : "not_found_online" });
+        // After an early end, a missing ad was most likely not reached yet.
+        results.push({ ...reference, status: endedEarly ? "not_checked" : "not_found_online" });
         continue;
       }
       const assessment = await assessAgainstOnline(ad.adConfigPath, onlineEntry, context);
@@ -5204,8 +5207,12 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
     }
     if (counts.not_checked) {
       nextActions.push(
-        "the browser run hit its time limit; not_checked ads were not read. " +
-          "Report the partial result and offer a new sync with a smaller maxAds",
+        timedOut
+          ? "the browser run hit its time limit; not_checked ads were not read. " +
+              "Report the partial result and offer a new sync with a smaller maxAds"
+          : "the browser run ended early (browser connection lost or browser restarted); " +
+              "not_checked ads were not read and say nothing about the ad online. Check " +
+              "kleinanzeigen_browser_status, then run the sync again",
       );
     }
     if (base.remaining > 0) {
@@ -5223,7 +5230,8 @@ export async function syncKleinanzeigenAds(params = {}, config = {}, { now = new
       ok: true,
       ...base,
       checked: results.length - (counts.not_checked ?? 0),
-      ...(timedOut ? { timedOut: true, partial: true } : {}),
+      ...(timedOut ? { timedOut: true } : {}),
+      ...(endedEarly ? { partial: true } : {}),
       counts,
       results,
       nextActions,

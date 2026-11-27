@@ -336,6 +336,30 @@ describe("two-way sync with Kleinanzeigen", () => {
     assert.ok(result.nextActions.some((action) => /sold: true/.test(action)), "suggests marking it sold");
   });
 
+  it("does not report ads as missing online when the browser connection is lost", async () => {
+    const { adRoot, config } = await workspace();
+    await publishedAd(adRoot, "lamp", {
+      internalId: 1, id: "3100000001", title: "Schreibtischlampe Metall", price: 30,
+    });
+    await publishedAd(adRoot, "chair", {
+      internalId: 2, id: "3100000002", title: "Bürostuhl mit Armlehnen", price: 40,
+    });
+    const download = fakeKleinanzeigen({
+      3100000001: { title: "Schreibtischlampe Metall", description: "Gut erhalten.", category: "210/217", price: 30 },
+    });
+    const runner = async (argv) => {
+      const result = await download(argv);
+      return { ...result, code: 1, stderr: "ProtocolError: CDP WebSocket closed" };
+    };
+    const result = await syncKleinanzeigenAds({ confirm: true, dryRun: true }, { ...config, commandRunner: runner });
+
+    const byId = Object.fromEntries(result.results.map((entry) => [entry.internalId, entry.status]));
+    assert.deepEqual(byId, { 1: "in_sync", 2: "not_checked" });
+    assert.equal(result.partial, true);
+    assert.notEqual(result.timedOut, true);
+    assert.ok(result.nextActions.some((action) => /ended early/.test(action)));
+  });
+
   it("stops the browser before the call budget and reports a partial result", async () => {
     const { adRoot, config } = await workspace();
     await publishedAd(adRoot, "lamp", {
